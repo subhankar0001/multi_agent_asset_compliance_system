@@ -1,0 +1,35 @@
+# pyproject.toml
+# Tooling-only configuration: ruff, mypy, pytest.
+# Dependencies are managed via requirements.txt / requirements-dev.txt.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "ANN", "S", "B", "C4", "RUF"]
+ignore = ["ANN101", "ANN102", "ANN401", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "ANN", "S105", "S106", "E501", "B017"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+exclude = ["tests/"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing --cov-fail-under=80"
+
+[build-system]
+requires = ["setuptools>=72"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "asset-compliance-ai"
+version = "1.0.0"
+description = "Serverless LangGraph microservice for automated asset compliance auditing"
+requires-python = ">=3.12"

@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Asset Compliance AI — Production Dependencies
+# Install: pip install -r requirements.txt
+# Python: 3.12+
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Web framework & Lambda adapter
+fastapi==0.115.5
+mangum==0.19.0
+uvicorn[standard]==0.32.1
+
+# Data validation
+pydantic==2.9.2
+pydantic-settings==2.6.1
+
+# Structured logging
+structlog==24.4.0
+aws-lambda-powertools==3.3.0
+
+# LangChain / LangGraph
+langchain==0.3.9
+langchain-google-genai==2.0.7
+langchain-openai>=0.2.10
+langchain-anthropic==0.3.0
+langchain-xai>=0.2.0,<0.3.0
+langgraph==0.2.55
+langchain-community==0.3.9
+
+# Vector database
+pinecone-client==5.0.1
+qdrant-client>=1.10.0
+
+# AWS SDK
+boto3==1.35.88
+
+# Document processing
+pypdf==5.1.0
+pillow==11.0.0
+
+# Web search fallback
+ddgs>=9.0.0
+
+# HTTP client
+httpx==0.28.1
+
+# Retry logic
+tenacity==9.0.0
+
+# Rate limiting
+slowapi>=0.1.9
+
+# (No raw LLM SDKs installed)

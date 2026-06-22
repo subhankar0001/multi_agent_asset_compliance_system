@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  lint-and-type-check:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check app/ tests/
+
+      - name: Ruff format check
+        run: ruff format --check app/ tests/
+
+      - name: Mypy type check
+        run: mypy app/
+
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    # Run tests after lint passes to save compute
+    needs: lint-and-type-check
+    env:
+      # All required env vars for tests — safe dummy values only
+      AWS_REGION: us-east-1
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: testing
+      AWS_SECRET_ACCESS_KEY: testing
+      AWS_SECURITY_TOKEN: testing
+      AWS_SESSION_TOKEN: testing
+      S3_BUCKET_NAME: test-bucket
+      PINECONE_API_KEY: test-pinecone-key
+      PINECONE_INDEX_NAME: test-index
+      PINECONE_ENVIRONMENT: us-east-1-aws
+      ANTHROPIC_API_KEY: test-anthropic-key
+      OPENAI_API_KEY: test-openai-key
+      XAI_API_KEY: test-xai-key
+      IMAGE_AGENT_PROVIDER: mock_provider
+      IMAGE_AGENT_MODEL: mock_model
+      RULE_AGENT_PROVIDER: mock_provider
+      RULE_AGENT_MODEL: mock_model
+      VERDICT_AGENT_PROVIDER: mock_provider
+      VERDICT_AGENT_MODEL: mock_model
+      CHAT_AGENT_PROVIDER: mock_provider
+      CHAT_AGENT_MODEL: mock_model
+      EMBEDDING_PROVIDER: mock_provider
+      EMBEDDING_MODEL: mock_model
+      EMBEDDING_DIMENSIONS: "1536"
+      API_SECRET_KEY: test-secret-key-minimum-32-chars-long
+      APP_ENV: development
+      LOG_LEVEL: DEBUG
+      DYNAMODB_AUDIT_TABLE: test-audit-runs-table
+      CORS_ALLOWED_ORIGINS: '["*"]'
+      RATE_LIMIT_AUDIT: "1000/minute"
+      RATE_LIMIT_INGEST: "1000/minute"
+      RATE_LIMIT_CHAT: "1000/minute"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install all dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --tb=short
+
+      - name: Run integration tests
+        run: pytest tests/integration/ -v --tb=short
+
+      - name: Generate coverage report
+        # Threshold must match pyproject.toml [tool.pytest.ini_options] cov-fail-under
+        run: pytest --cov=app --cov-report=xml --cov-fail-under=80
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  sam-validate:
+    name: SAM Template Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: testing
+          aws-secret-access-key: testing
+          aws-region: us-east-1
+
+      - name: SAM validate
+        run: sam validate --lint
+
+  dependency-audit:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    # Run in parallel with lint — does not block test execution
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit production dependencies
+        # --strict causes the step to fail if any vulnerability is found
+        # --desc provides CVE descriptions in the output
+        run: pip-audit -r requirements.txt --strict --desc
+
+      - name: Audit dev dependencies
+        # Failures here are informational — dev tools do not reach production
+        run: pip-audit -r requirements-dev.txt --desc || true
+

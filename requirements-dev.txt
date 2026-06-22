@@ -1,0 +1,27 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Asset Compliance AI — Development Dependencies
+# Install: pip install -r requirements-dev.txt
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Include all production dependencies
+-r requirements.txt
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-cov==6.0.0
+
+# AWS mocking
+moto[s3,ssm,dynamodb]==5.0.22
+
+# Type stubs for AWS
+boto3-stubs[s3,ssm]==1.35.88
+
+# Linting & formatting
+ruff==0.8.3
+
+# Type checking
+mypy==1.13.0
+
+# HTTPX for async test client (also in prod, but listed explicitly for dev clarity)
+httpx==0.28.1

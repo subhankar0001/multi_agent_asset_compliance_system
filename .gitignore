@@ -216,3 +216,28 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+#agentic preview
+AGENT_BRIEFING.md
+
+# ─── Project-specific ───────────────────────────────────────────────────────
+# Never commit real secrets
+.env
+.env.local
+.env.*.local
+
+# AWS SAM build artifacts
+.aws-sam/
+samconfig.toml.bak
+
+# Lambda deployment packages
+*.zip
+
+# Local coverage reports
+htmlcov/
+.coverage
+
+# Type checking caches
+.mypy_cache/
+.dmypy.json

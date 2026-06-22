@@ -1,0 +1,216 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  Asset Compliance AI — Serverless LangGraph microservice for automated
+  physical asset compliance auditing. Deployed as a single Lambda function
+  with response streaming enabled.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - arm64
+    Environment:
+      Variables:
+        AWS_ACCOUNT_ID: !Ref AWS::AccountId
+        POWERTOOLS_SERVICE_NAME: asset-compliance-ai
+        LOG_LEVEL: !Ref LogLevel
+    Layers:
+      - !Ref DependenciesLayer
+    Tracing: Active   # AWS X-Ray distributed tracing
+
+Parameters:
+  AppEnv:
+    Type: String
+    Default: production
+    AllowedValues: [development, staging, production]
+    Description: Deployment environment
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: [DEBUG, INFO, WARNING, ERROR]
+    Description: Lambda log level
+
+Resources:
+
+  # ── Lambda Function ─────────────────────────────────────────────────────────
+  ComplianceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "asset-compliance-ai-${AppEnv}"
+      CodeUri: app/
+      Handler: main.handler
+      MemorySize: 3008     # Maximum memory for long audit runs
+      Timeout: 900         # 15 minutes — LangGraph pipeline can be long
+      FunctionUrlConfig:
+        AuthType: AWS_IAM  # IAM-authenticated — no unauthenticated access
+        InvokeMode: RESPONSE_STREAM
+        Cors:
+          AllowOrigins:
+            - "*"
+          AllowMethods:
+            - POST
+            - GET
+          AllowHeaders:
+            - Content-Type
+            - Authorization
+            - X-API-Key
+            - X-Request-ID
+      Environment:
+        Variables:
+          APP_ENV: !Ref AppEnv
+          AWS_REGION: !Ref AWS::Region
+          S3_BUCKET_NAME: !Ref AssetDocsBucket
+          # All secrets resolved from SSM Parameter Store at deploy time
+          PINECONE_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/pinecone_api_key}}"
+          PINECONE_INDEX_NAME:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/pinecone_index_name}}"
+          PINECONE_ENVIRONMENT:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/pinecone_environment}}"
+          ANTHROPIC_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/anthropic_api_key}}"
+          OPENAI_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/openai_api_key}}"
+          GOOGLE_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/google_api_key}}"
+          XAI_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/xai_api_key}}"
+          
+          IMAGE_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/image_agent_provider}}"
+          IMAGE_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/image_agent_model}}"
+          RULE_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/rule_agent_provider}}"
+          RULE_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/rule_agent_model}}"
+          VERDICT_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/verdict_agent_provider}}"
+          VERDICT_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/verdict_agent_model}}"
+          CHAT_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/chat_agent_provider}}"
+          CHAT_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/chat_agent_model}}"
+          
+          LLM_MAX_TOKENS: "4096"
+          LLM_CHAT_MAX_TOKENS: "1024"
+          EMBEDDING_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/embedding_provider}}"
+          EMBEDDING_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/embedding_model}}"
+          EMBEDDING_DIMENSIONS: "1536"
+
+          DYNAMODB_AUDIT_TABLE: !Ref AuditRunsTable
+
+          LANGCHAIN_TRACING_V2: "true"
+          LANGCHAIN_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/langchain_api_key}}"
+          LANGCHAIN_PROJECT: "asset-compliance-ai"
+          API_SECRET_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/api_secret_key}}"
+          RETRIEVAL_TOP_K_AUDIT: "20"
+          RETRIEVAL_TOP_K_CHAT: "12"
+          CHUNK_SIZE: "512"
+          CHUNK_OVERLAP: "64"
+      Policies:
+        # Read-only access to the asset docs S3 bucket
+        - S3ReadPolicy:
+            BucketName: !Ref AssetDocsBucket
+        # Read/write to the audit run idempotency DynamoDB table
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditRunsTable
+        # Read SSM parameters for this environment
+        - SSMParameterReadPolicy:
+            ParameterName: !Sub "/asset-compliance/${AppEnv}/*"
+        # CloudWatch Lambda Insights for enhanced monitoring
+        - CloudWatchLambdaInsightsExecutionRolePolicy
+
+  # ── DynamoDB Table for Audit Run Idempotency ─────────────────────────────
+  AuditRunsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "audit-compliance-runs-${AppEnv}"
+      BillingMode: PAY_PER_REQUEST
+      TableClass: STANDARD
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true   # AWS-managed encryption at rest
+      AttributeDefinitions:
+        - AttributeName: run_id
+          AttributeType: S
+        - AttributeName: asset_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: run_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: AssetIdIndex
+          KeySchema:
+            - AttributeName: asset_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true   # Records expire after 30 days (set by dynamodb_service)
+
+  # ── S3 Bucket for Asset Documents and Images ──────────────────────────────
+  AssetDocsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "asset-compliance-docs-${AppEnv}-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled    # Enable versioning for audit trail
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+
+  # ── Python Dependencies Lambda Layer ─────────────────────────────────────
+  DependenciesLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "asset-compliance-deps-${AppEnv}"
+      Description: Python dependencies for asset-compliance-ai (requirements.txt)
+      ContentUri: dependencies/
+      CompatibleRuntimes:
+        - python3.12
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Retain    # Keep old layer versions for rollback
+    Metadata:
+      BuildMethod: python3.12
+
+Outputs:
+  ComplianceFunctionUrl:
+    Description: Lambda Function URL (IAM-authenticated, streaming)
+    Value: !GetAtt ComplianceFunctionUrl.FunctionUrl
+    Export:
+      Name: !Sub "asset-compliance-ai-${AppEnv}-url"
+
+  AssetDocsBucketName:
+    Description: S3 bucket name for asset documents and audit images
+    Value: !Ref AssetDocsBucket
+    Export:
+      Name: !Sub "asset-compliance-ai-${AppEnv}-bucket"
+
+  ComplianceFunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt ComplianceFunction.Arn
+    Export:
+      Name: !Sub "asset-compliance-ai-${AppEnv}-arn"

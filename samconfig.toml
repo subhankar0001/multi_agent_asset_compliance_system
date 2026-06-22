@@ -1,0 +1,26 @@
+version = 0.1
+
+[default]
+[default.global.parameters]
+stack_name = "asset-compliance-ai"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+capabilities        = "CAPABILITY_IAM"
+confirm_changeset   = true
+resolve_s3          = true
+s3_prefix           = "asset-compliance-ai"
+region              = "us-east-1"
+parameter_overrides = "AppEnv=production LogLevel=INFO"
+
+[staging]
+[staging.deploy.parameters]
+parameter_overrides = "AppEnv=staging LogLevel=DEBUG"
+
+[development]
+[development.deploy.parameters]
+parameter_overrides = "AppEnv=development LogLevel=DEBUG"
+confirm_changeset   = false
