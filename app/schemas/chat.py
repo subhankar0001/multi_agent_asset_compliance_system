@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.audit import AssetSpec
+
 
 class Message(BaseModel):
     """One turn in a conversation history."""
@@ -30,23 +32,28 @@ class ChatRequest(BaseModel):
     """Request body for POST /api/v1/chat/query."""
 
     asset_id: str = Field(..., min_length=1)
-    asset_spec: dict[str, Any] = Field(..., description="Asset metadata from Django")
+    asset_spec: AssetSpec = Field(..., description="Asset metadata from backend client")
     question: str = Field(..., min_length=1, max_length=2000)
     conversation_history: list[Message] = Field(
         default_factory=list,
         max_length=50,
         description=(
             "Full prior turns in this session (max 50). "
-            "Lambda is stateless — the Django client passes the full history."
+            "Lambda is stateless — the backend client passes the full history."
         ),
     )
     previous_verdicts: list[dict[str, Any]] | None = Field(
         default=None,
         description="Recent audit verdicts — enables questions about past audit findings",
     )
-    doc_type_filter: str | None = Field(
+    doc_type_filter: Literal[
+        "user_manual",
+        "safety_sheet",
+        "compliance_spec",
+        "installation_image",
+        "other",
+    ] | None = Field(
         default=None,
-        pattern=r'^[a-zA-Z0-9/_\-\.]+$',
         description=(
             "Optional: restrict RAG retrieval to one doc_type. "
             "e.g. 'safety_sheet', 'user_manual'. "

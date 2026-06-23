@@ -86,7 +86,7 @@ async def document_agent_node(state: AuditState) -> dict[str, Any]:
         return {"retrieved_chunks": chunks, "documents_consulted": doc_ids}
 
     except Exception as exc:
-        logger.error("document_agent_error", asset_id=asset_id, error=str(exc))
+        logger.error("document_agent_error", asset_id=asset_id, error=type(exc).__name__)
         return {
             "retrieved_chunks": [],
             "documents_consulted": [],

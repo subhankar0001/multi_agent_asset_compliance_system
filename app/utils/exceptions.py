@@ -10,7 +10,7 @@ All errors returned to API clients follow a consistent JSON envelope:
     }
   }
 
-This makes error handling on the Django client side deterministic.
+This makes error handling on the backend client side deterministic.
 """
 
 from fastapi import Request, status

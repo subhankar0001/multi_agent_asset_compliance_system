@@ -39,7 +39,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "asset-compliance-ingest-${AppEnv}"
-      CodeUri: app/
+      CodeUri: ../../app/
       Handler: main.handler
       MemorySize: 1536     # Optimized for ingestion workloads
       Timeout: 300         # 5 minutes
@@ -137,7 +137,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "asset-compliance-audit-${AppEnv}"
-      CodeUri: app/
+      CodeUri: ../../app/
       Handler: main.handler
       MemorySize: 3008     # Maximum memory for long audit runs
       Timeout: 900         # 15 minutes — LangGraph pipeline can be long
@@ -235,7 +235,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "asset-compliance-chat-${AppEnv}"
-      CodeUri: app/
+      CodeUri: ../../app/
       Handler: main.handler
       MemorySize: 1536     # Optimized for conversational chat workloads
       Timeout: 60          # 1 minute
@@ -380,6 +380,9 @@ Resources:
             Status: Enabled
             NoncurrentVersionExpiration:
               NoncurrentDays: 90
+          - Id: ExpireDocuments
+            Status: Enabled
+            ExpirationInDays: 2555
 
   # ── Python Dependencies Lambda Layer ─────────────────────────────────────
   DependenciesLayer:
@@ -387,7 +390,7 @@ Resources:
     Properties:
       LayerName: !Sub "asset-compliance-deps-${AppEnv}"
       Description: Python dependencies for asset-compliance-ai (requirements.txt)
-      ContentUri: dependencies/
+      ContentUri: ../../dependencies/
       CompatibleRuntimes:
         - python3.12
       CompatibleArchitectures:

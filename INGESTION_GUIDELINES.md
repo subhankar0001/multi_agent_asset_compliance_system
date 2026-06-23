@@ -40,12 +40,17 @@ The `POST /api/v1/ingest` API supports multiple document ingestion patterns depe
    * **Exactly one document** must be sent in the request list.
    * The pipeline automatically locates and deletes all old vector chunks matching the `doc_id` inside the namespace, then embeds and writes the new file.
 
+4. **GDPR Erasure (Right-to-Erasure):**
+   * To completely wipe an asset's records from the system, do not use the ingest endpoint.
+   * Instead, call `DELETE /api/v1/admin/assets/{asset_id}`. This purges Pinecone vectors, S3 documents, S3 images, and DynamoDB logs.
+
 ---
 
 ## 3. Preparing Files for Ingestion (Enterprise Best Practices)
 
 To maximize RAG retrieval efficiency and compliance audit accuracy:
-* **Stable Document IDs (`doc_id`):** Your main database (e.g., Django) must assign and maintain stable, unique identifiers for documents. When replacing a manual, keep the same `doc_id` and send it with the `update` lifecycle event.
+* **Strict S3 Key Formatting:** To prevent directory traversal attacks, `s3_key` values must strictly adhere to the regex `^[a-zA-Z0-9/_\-\.]+$`. Do not use spaces or special characters in filenames or paths.
+* **Stable Document IDs (`doc_id`):** Your main database (e.g., backend client) must assign and maintain stable, unique identifiers for documents. When replacing a manual, keep the same `doc_id` and send it with the `update` lifecycle event.
 * **Keep Documents Segmented:** Rather than merging all manuals into one giant PDF, upload them as separate S3 keys and register them as individual items. This ensures accurate source-attribution and file citations.
 * **Avoid Non-Standard File Types:** Word documents (`.docx`), Excel files (`.xlsx`), or plain text (`.txt`) are not natively chunked. Convert text guidelines into PDFs before uploading to S3.
 
@@ -89,7 +94,7 @@ All requests must include the timing-safe shared API key in the headers.
 }
 ```
 
-### Python Integration Example (Django/Enterprise Client)
+### Python Integration Example (Backend/Enterprise Client)
 ```python
 import requests
 import json

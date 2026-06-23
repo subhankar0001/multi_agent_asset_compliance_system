@@ -54,7 +54,7 @@ multi_agent_asset_compliance_system/
 ## 1. Executive Program Manager Review
 
 ### Project Scope Alignment
-The system is a well-scoped serverless microservice acting as an AI compliance backend for a Django orchestrator. Scope is well-defined: ingest → audit → chat. All three endpoints are implemented.
+The system is a well-scoped serverless microservice acting as an AI compliance backend for a backend client orchestrator. Scope is well-defined: ingest → audit → chat. All three endpoints are implemented.
 
 ### Feature Completeness
 | Feature | Status |
@@ -303,7 +303,7 @@ Even though the `AuthType: AWS_IAM` at the Lambda Function URL level provides a 
 
 **Remediation:** Replace `["*"]` with an explicit allowlist sourced from a `CORS_ALLOWED_ORIGINS` environment variable:
 ```python
-allow_origins=settings.cors_allowed_origins,  # e.g. ["https://your-django-app.com"]
+allow_origins=settings.cors_allowed_origins,  # e.g. ["https://your-backend client-app.com"]
 allow_credentials=True,
 ```
 
@@ -437,7 +437,7 @@ The CI pipeline (`ci.yml`) covers:
 ### Observability
 - ✅ Structured JSON logging via structlog (CloudWatch Logs Insights compatible)
 - ✅ AWS X-Ray distributed tracing (`Tracing: Active`)
-- ⚠️ No correlation ID propagated from upstream Django into the Lambda execution (the `X-Request-ID` header is accepted but not injected into the structlog context)
+- ⚠️ No correlation ID propagated from upstream backend client into the Lambda execution (the `X-Request-ID` header is accepted but not injected into the structlog context)
 - ❌ No business metric tracking (audit runs per day, compliance verdicts by status, LLM latency percentiles)
 - ❌ No CloudWatch dashboard defined
 
@@ -541,7 +541,7 @@ For a 200-page PDF chunked at 512 chars with 64 char overlap = ~450 chunks. At 1
 # verdict_agent.py:110
 evidence_bundle=json.dumps(state.get("evidence_bundle", [])[:20], indent=2),
 ```
-The evidence bundle is capped at 20 for the verdict prompt, but the full bundle (potentially hundreds of items) is still serialised into the verdict response and returned to the Django client. For an audit with 20 retrieved chunks + 10 images with 5 findings each = 70+ evidence items in the response payload.
+The evidence bundle is capped at 20 for the verdict prompt, but the full bundle (potentially hundreds of items) is still serialised into the verdict response and returned to the backend client. For an audit with 20 retrieved chunks + 10 images with 5 findings each = 70+ evidence items in the response payload.
 
 ---
 
@@ -556,7 +556,7 @@ There is no overall timeout budget for an audit run. If the LLM for any agent ha
 
 **Strengths:**
 - Three-tier RAG fallback in chat is well-designed for real-world document coverage gaps
-- NDJSON streaming enables real-time progress UX in the Django client
+- NDJSON streaming enables real-time progress UX in the backend client
 - Configurable agent providers via env vars (not hardcoded to one LLM vendor)
 - Evidence citations in chat responses enable trust and auditability
 
@@ -573,7 +573,7 @@ There is no overall timeout budget for an audit run. If the LLM for any agent ha
 
 **UX Concerns:**
 - The `INSUFFICIENT_DATA` fallback is not surfaced distinctively enough to the auditor — it requires reading the full verdict reasoning to understand why no verdict was reached
-- The chat endpoint returns raw LLM content with no markdown stripping or length capping — very long answers may break Django rendering
+- The chat endpoint returns raw LLM content with no markdown stripping or length capping — very long answers may break backend client rendering
 
 ---
 
@@ -588,7 +588,7 @@ There is no overall timeout budget for an audit run. If the LLM for any agent ha
 Audit photos (`s3_image_keys`) and compliance documents are stored in S3. Pinecone vectors are stored indefinitely. There is no mechanism to delete asset data when an asset is decommissioned or when its retention period expires. S3 lifecycle rules exist for version cleanup (90 days) but not for object deletion.
 
 **COMP-2 (HIGH): No Audit Trail for Compliance Verdicts**
-The system generates compliance verdicts but does not persist them. If the Django client fails to store the verdict, it is lost forever. An audit system **must** have an immutable audit log of every verdict generated, who requested it, and when.
+The system generates compliance verdicts but does not persist them. If the backend client fails to store the verdict, it is lost forever. An audit system **must** have an immutable audit log of every verdict generated, who requested it, and when.
 
 **COMP-3 (HIGH): PII in Logs**
 The `auditor_remarks` field can contain personally identifiable information (e.g., "John Smith noted the valve was cracked"). These remarks are logged:
@@ -612,7 +612,7 @@ There is no delete endpoint for removing all data associated with an asset (S3 o
 
 | Integration Point | Status | Risk |
 |---|---|---|
-| Django → Lambda (API Key) | ✅ Functional | LOW |
+| backend client → Lambda (API Key) | ✅ Functional | LOW |
 | Lambda → Pinecone (query/upsert) | ✅ Functional with retry | MEDIUM (eventual consistency) |
 | Lambda → S3 (download) | ⚠️ Synchronous in async context | HIGH (event loop blocking) |
 | Lambda → LLM APIs (anthropic/openai/xai) | ✅ Functional with structured output | MEDIUM (vendor outage) |
@@ -702,7 +702,7 @@ There is no delete endpoint for removing all data associated with an asset (S3 o
 | S3 event loop block causes Lambda timeout storm | HIGH | High (under load) | Service outage | Engineering |
 | CORS wildcard enables credential theft | HIGH | Low (API key still needed) | Data breach | Security |
 | Pinecone degradation cascades to all audits | HIGH | Low-Medium | Service outage | SRE |
-| Compliance verdict lost on Django failure | HIGH | Medium | Audit trail gap | Architecture |
+| Compliance verdict lost on backend client failure | HIGH | Medium | Audit trail gap | Architecture |
 | GDPR erasure request cannot be fulfilled | HIGH | Medium (with enterprise clients) | Regulatory fine | Compliance |
 | Lambda concurrency exhaustion | MEDIUM | Medium (burst traffic) | Service throttling | SRE |
 | LLM provider API key not set, silently uses `"not_configured"` | MEDIUM | Low | All LLM calls fail | DevOps |

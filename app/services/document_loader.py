@@ -18,6 +18,7 @@ Chunk metadata preserves all fields needed for source attribution in
 evidence citations and chat responses.
 """
 
+import hashlib
 import io
 from datetime import UTC, datetime
 from typing import Any
@@ -67,10 +68,11 @@ def load_pdf(
         reader = PdfReader(io.BytesIO(raw_bytes))
         pages_to_process = reader.pages
     except Exception as exc:
-        logger.warning("pdf_parse_error", doc_id=document.doc_id, error=str(exc))
+        logger.warning("pdf_parse_error", doc_id=document.doc_id, error=type(exc).__name__)
         return []
     chunks: list[dict[str, Any]] = []
     chunk_global_idx = 0
+    content_hash = hashlib.md5(raw_bytes).hexdigest()[:8]
 
     for page_num, page in enumerate(pages_to_process, start=1):
         page_text = page.extract_text() or ""
@@ -80,7 +82,7 @@ def load_pdf(
         for chunk_text in _chunk_text(page_text, settings.chunk_size, settings.chunk_overlap):
             chunks.append(
                 {
-                    "chunk_id": f"{document.doc_id}_p{page_num}_c{chunk_global_idx}",
+                    "chunk_id": f"{document.doc_id}_{content_hash}_p{page_num}_c{chunk_global_idx}",
                     "text": chunk_text,
                     "metadata": {
                         "asset_id": asset_id,
@@ -121,7 +123,8 @@ def load_image_document(
     Storing it as a vector allows the image to participate in semantic
     retrieval queries alongside PDF documents.
     """
-    chunk_id = f"{document.doc_id}_img_0"
+    content_hash = hashlib.md5(description.encode("utf-8")).hexdigest()[:8]
+    chunk_id = f"{document.doc_id}_{content_hash}_img_0"
     return [
         {
             "chunk_id": chunk_id,

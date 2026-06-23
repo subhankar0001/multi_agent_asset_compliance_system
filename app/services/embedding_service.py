@@ -28,7 +28,9 @@ async def embed_texts(client: Embeddings, texts: list[str]) -> list[list[float]]
     Raises EmbeddingError after 3 failed retry attempts.
     """
     all_embeddings: list[list[float]] = []
-    batch_size = 100
+    
+    from app.config import get_settings
+    batch_size = get_settings().embedding_batch_size
 
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]

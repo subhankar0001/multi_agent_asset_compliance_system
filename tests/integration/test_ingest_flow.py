@@ -233,6 +233,7 @@ async def test_ingest_update_event(s3_bucket, mock_pinecone_index, mock_embeddin
     mock_pinecone_index.describe_index_stats.return_value = MagicMock(
         namespaces={"asset_abc-123": MagicMock(vector_count=10)}
     )
+    mock_pinecone_index.list.return_value = iter([["vec1", "vec2"]])
 
     app = create_app()
     with (
@@ -265,6 +266,6 @@ async def test_ingest_update_event(s3_bucket, mock_pinecone_index, mock_embeddin
     assert body["documents_processed"] == 1
     # delete_by_doc_id is called
     mock_pinecone_index.delete.assert_called_once_with(
-        filter={"doc_id": {"$eq": "manual-v2"}},
+        ids=["vec1", "vec2"],
         namespace="asset_abc-123",
     )

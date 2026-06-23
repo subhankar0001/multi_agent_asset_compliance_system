@@ -23,16 +23,48 @@ from app.agents.state import AuditState
 logger = structlog.get_logger(__name__)
 
 
+def _get_priority(item: dict[str, Any]) -> int:
+    """
+    Assign a 1-5 priority score (1 = Crucial, 5 = Casual) to an evidence item.
+    """
+    source_type = item.get("source_type")
+    if source_type == "auditor_remark":
+        return 1
+    elif source_type == "image":
+        condition = str(item.get("condition", "")).lower()
+        if condition in ["critical", "poor"]:
+            return 1
+        elif condition == "fair":
+            return 3
+        else:
+            return 4
+    elif source_type == "document":
+        score = item.get("relevance_score") or 0.0
+        if score > 0.85:
+            return 2
+        elif score > 0.75:
+            return 3
+        elif score > 0.65:
+            return 4
+        else:
+            return 5
+    return 5
+
+
 async def evidence_agent_node(state: AuditState) -> dict[str, Any]:
     """
     Consolidate document, image, and remark evidence into a unified bundle.
 
     No external API calls are made — this is a pure data transformation node.
-    The evidence bundle is ordered: documents first, then images, then remarks.
+    The evidence bundle is sorted by a 5-step priority system to ensure critical 
+    findings are not dropped when capping to stay within token limits.
 
     Returns:
         dict with keys: evidence_bundle
     """
+    from app.config import get_settings
+    settings = get_settings()
+    
     evidence: list[dict[str, Any]] = []
 
     # ── Evidence from retrieved document chunks ───────────────────────────────
@@ -83,13 +115,20 @@ async def evidence_agent_node(state: AuditState) -> dict[str, Any]:
                 "finding": f"Auditor observed: {state['auditor_remarks']}",
             }
         )
+        
+    # Sort by priority (1 is highest, 5 is lowest)
+    evidence.sort(key=_get_priority)
+    
+    # Cap the bundle to prevent context window explosion and massive API payloads
+    capped_evidence = evidence[:settings.evidence_bundle_cap]
 
     logger.info(
         "evidence_agent_complete",
         asset_id=state.get("asset_id"),
-        evidence_count=len(evidence),
-        document_evidence=sum(1 for e in evidence if e["source_type"] == "document"),
-        image_evidence=sum(1 for e in evidence if e["source_type"] == "image"),
-        remark_evidence=sum(1 for e in evidence if e["source_type"] == "auditor_remark"),
+        total_evidence_count=len(evidence),
+        capped_evidence_count=len(capped_evidence),
+        document_evidence=sum(1 for e in capped_evidence if e["source_type"] == "document"),
+        image_evidence=sum(1 for e in capped_evidence if e["source_type"] == "image"),
+        remark_evidence=sum(1 for e in capped_evidence if e["source_type"] == "auditor_remark"),
     )
-    return {"evidence_bundle": evidence}
+    return {"evidence_bundle": capped_evidence}

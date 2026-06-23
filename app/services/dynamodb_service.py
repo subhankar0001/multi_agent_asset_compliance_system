@@ -8,13 +8,13 @@ LangGraph pipeline the audit endpoint checks this table:
   - IN_PROGRESS    → return HTTP 409 (another invocation is running)
   - COMPLETE       → return the cached verdict immediately (HTTP 200)
 
-This prevents duplicate LLM expenditure when Django retries a timed-out
+This prevents duplicate LLM expenditure when backend client retries a timed-out
 Lambda request, and gives the system a single source of truth for every
 audit verdict.
 
 Table schema
 ------------
-  PK (run_id)          : str  — the Django-supplied idempotency key
+  PK (run_id)          : str  — the backend client-supplied idempotency key
   asset_id             : str  — for GSI / query by asset
   status               : str  — IN_PROGRESS | COMPLETE | FAILED | ERASED
   verdict              : str  — JSON-encoded verdict dict (set on COMPLETE)

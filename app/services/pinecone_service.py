@@ -19,6 +19,7 @@ from pinecone import Index
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
+from app.utils.circuit_breaker import circuit_breaker
 
 logger = structlog.get_logger(__name__)
 
@@ -28,6 +29,7 @@ def _namespace(asset_id: str) -> str:
     return f"asset_{asset_id}"
 
 
+@circuit_breaker("pinecone", failure_threshold=3, recovery_timeout=30)
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -62,6 +64,7 @@ def upsert_vectors(
     return total
 
 
+@circuit_breaker("pinecone", failure_threshold=3, recovery_timeout=30)
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -78,29 +81,24 @@ def delete_by_doc_id(index: Index, asset_id: str, doc_id: str) -> int:
     Returns the count of deleted vectors (best-effort from stats diff).
     """
     namespace = _namespace(asset_id)
+    prefix = f"{asset_id}_{doc_id}_"
+    deleted_count = 0
 
-    # Snapshot vector count before deletion
-    stats_before = index.describe_index_stats()
-    ns_before = stats_before.namespaces.get(namespace, {})
-    count_before = getattr(ns_before, "vector_count", 0)
+    for ids_batch in index.list(prefix=prefix, namespace=namespace):
+        if ids_batch:
+            index.delete(ids=ids_batch, namespace=namespace)
+            deleted_count += len(ids_batch)
 
-    index.delete(filter={"doc_id": {"$eq": doc_id}}, namespace=namespace)
-
-    # Snapshot vector count after deletion
-    stats_after = index.describe_index_stats()
-    ns_after = stats_after.namespaces.get(namespace, {})
-    count_after = getattr(ns_after, "vector_count", 0)
-
-    deleted = max(0, count_before - count_after)
     logger.info(
         "pinecone_delete_complete",
         namespace=namespace,
         doc_id=doc_id,
-        vectors_deleted=deleted,
+        vectors_deleted=deleted_count,
     )
-    return deleted
+    return deleted_count
 
 
+@circuit_breaker("pinecone", failure_threshold=3, recovery_timeout=30)
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -163,18 +161,21 @@ def namespace_has_docs(index: Index, asset_id: str) -> bool:
 
 def doc_id_exists(index: Index, asset_id: str, doc_id: str) -> bool:
     """Return True if vectors with this doc_id already exist in the namespace."""
-    settings = get_settings()
     namespace = _namespace(asset_id)
-    response = index.query(
-        vector=[0.0] * settings.embedding_dimensions,
-        top_k=1,
-        namespace=namespace,
-        filter={"doc_id": {"$eq": doc_id}},
-        include_metadata=False,
-    )
-    return len(response.matches) > 0
+    prefix = f"{asset_id}_{doc_id}_"
+    
+    try:
+        generator = index.list(prefix=prefix, namespace=namespace)
+        for ids_batch in generator:
+            if ids_batch:
+                return True
+    except Exception as e:
+        logger.warning("doc_id_exists_list_error", error=str(e))
+        
+    return False
 
 
+@circuit_breaker("pinecone", failure_threshold=3, recovery_timeout=30)
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -204,15 +205,9 @@ def delete_namespace(index: Index, asset_id: str) -> int:
     # Delete all vectors in the namespace
     index.delete(delete_all=True, namespace=namespace)
 
-    # Snapshot count after deletion
-    stats_after = index.describe_index_stats()
-    ns_after = stats_after.namespaces.get(namespace, {})
-    count_after = getattr(ns_after, "vector_count", 0)
-
-    deleted = max(0, count_before - count_after)
     logger.info(
         "pinecone_namespace_deleted",
         namespace=namespace,
-        vectors_deleted=deleted,
+        vectors_deleted=count_before,
     )
-    return deleted
+    return count_before

@@ -11,20 +11,20 @@ Routes:
          1. Deletes all Pinecone vectors in the asset namespace
          2. Marks all DynamoDB audit run records as ERASED
        This is irreversible — S3 objects are outside this service's scope
-       and must be deleted separately via the Django asset management system.
+       and must be deleted separately via the enterprise asset management system.
 
 Authentication:
   All endpoints require the X-API-Key header (same as all other routes).
   There is no separate admin role — the shared API key is sufficient since
-  this service is only called from the trusted Django backend.
+  this service is only called from the trusted backend server.
 """
 
 import structlog
 from fastapi import APIRouter, status
 
-from app.dependencies import DynamoDBDep, PineconeDep, SettingsDep
+from app.dependencies import DynamoDBDep, PineconeDep, SettingsDep, S3Dep
 from app.schemas.admin import AssetDeleteResponse, AssetStatsResponse
-from app.services import dynamodb_service, pinecone_service
+from app.services import dynamodb_service, pinecone_service, s3_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = structlog.get_logger(__name__)
@@ -87,18 +87,26 @@ async def get_asset_stats(
         "Permanently deletes all Pinecone vectors for the asset and marks all "
         "DynamoDB audit run records as ERASED. "
         "⚠️ This operation is irreversible. "
-        "S3 documents must be deleted separately via the Django asset management system."
+        "S3 documents must be deleted separately via the enterprise asset management system."
     ),
 )
 async def delete_asset(
     asset_id: str,
     index: PineconeDep,
     dynamodb_client: DynamoDBDep,
+    s3_client: S3Dep,
     settings: SettingsDep,
 ) -> AssetDeleteResponse:
     """Erase all stored data for an asset (GDPR Article 17 compliance)."""
     log = logger.bind(asset_id=asset_id)
     log.warning("admin_asset_erasure_initiated", asset_id=asset_id)
+
+    # ── Delete S3 objects ──────────────────────────────────────────────────────
+    s3_deleted = await s3_service.delete_asset_documents(
+        s3_client,
+        settings.s3_bucket_name,
+        asset_id,
+    )
 
     # ── Delete Pinecone vectors ────────────────────────────────────────────────
     vectors_deleted = pinecone_service.delete_namespace(index, asset_id)
@@ -114,6 +122,7 @@ async def delete_asset(
         "admin_asset_erasure_complete",
         vectors_deleted=vectors_deleted,
         runs_erased=runs_erased,
+        s3_deleted=s3_deleted,
     )
 
     return AssetDeleteResponse(
@@ -122,7 +131,7 @@ async def delete_asset(
         audit_runs_erased=runs_erased,
         message=(
             f"Asset '{asset_id}' data erased: {vectors_deleted} Pinecone vectors deleted, "
-            f"{runs_erased} audit run records marked as ERASED. "
-            "S3 documents must be deleted separately."
+            f"{runs_erased} audit run records marked as ERASED, "
+            f"and {s3_deleted} S3 documents permanently deleted."
         ),
     )

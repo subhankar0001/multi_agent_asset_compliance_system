@@ -98,6 +98,12 @@ class Settings(BaseSettings):
         ge=1,
         description="Embedding vector dimensions — must match Pinecone index configuration",
     )
+    embedding_batch_size: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+        description="Number of texts embedded per API call to stay within rate limits",
+    )
 
     # ── LangSmith (optional tracing) ──────────────────────────────────────────
     langchain_tracing_v2: bool = Field(default=False, description="Enable LangSmith tracing")
@@ -114,9 +120,9 @@ class Settings(BaseSettings):
     )
     log_level: str = Field(default="INFO", description="Logging level")
     cors_allowed_origins: list[str] = Field(
-        default=["*"],
+        default=["http://localhost:8000"],
         description=(
-            "Allowed CORS origins. In production, set to your Django app domain(s) "
+            "Allowed CORS origins. In production, set to your backend client domain(s) "
             "to prevent the wildcard + credentials CORS vulnerability. "
             'Example: CORS_ALLOWED_ORIGINS=["https://app.yourdomain.com"]'
         ),
@@ -132,6 +138,12 @@ class Settings(BaseSettings):
     )
     chunk_overlap: int = Field(
         default=64, ge=0, le=512, description="Overlap between consecutive chunks in characters"
+    )
+    evidence_bundle_cap: int = Field(
+        default=20, ge=1, le=100, description="Max number of evidence items passed to verdict LLM and returned in API"
+    )
+    audit_timeout_seconds: int = Field(
+        default=120, ge=10, le=800, description="Max time allowed for the audit graph execution before timing out"
     )
 
     # ── DynamoDB ──────────────────────────────────────────────────────────────
@@ -164,7 +176,7 @@ class Settings(BaseSettings):
         default=SecretStr("local-api-secret-key-12345"),
         description=(
             "Shared API secret key. Must match the API_SECRET_KEY configured in the "
-            "Django asset management system. All inbound requests must include the "
+            "enterprise asset management system. All inbound requests must include the "
             "X-API-Key header with this value."
         ),
     )

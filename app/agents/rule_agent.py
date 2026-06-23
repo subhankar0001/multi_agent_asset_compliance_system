@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from app.agents.state import AuditState, get_asset_spec_dict
 from app.dependencies import get_rule_agent_llm
 from app.schemas.audit import TriggeredRule
+from app.utils.circuit_breaker import circuit_breaker
 
 logger = structlog.get_logger(__name__)
 
@@ -98,7 +99,8 @@ async def rule_agent_node(state: AuditState) -> dict[str, Any]:
         structured_llm = llm.with_structured_output(RulesOutput)
         messages = [HumanMessage(content=prompt)]
 
-        parsed_obj: RulesOutput = await structured_llm.ainvoke(messages)  # type: ignore[assignment]
+        cb = circuit_breaker("llm", failure_threshold=3, recovery_timeout=60)
+        parsed_obj: RulesOutput = await cb(structured_llm.ainvoke)(messages)  # type: ignore[assignment]
         triggered_dicts = [rule.model_dump() for rule in parsed_obj.triggered_rules]
 
         logger.info(
@@ -109,6 +111,6 @@ async def rule_agent_node(state: AuditState) -> dict[str, Any]:
         return {"triggered_rules": triggered_dicts, "errors": new_errors}
 
     except Exception as exc:
-        logger.error("rule_agent_error", error=str(exc))
+        logger.error("rule_agent_error", error=type(exc).__name__)
         new_errors.append(f"rule_agent: {exc}")
         return {"triggered_rules": [], "errors": new_errors}

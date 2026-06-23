@@ -29,22 +29,28 @@ def test_upsert_vectors_small_batch(mock_pinecone_index):
 
 
 def test_delete_by_doc_id_calls_correct_filter(mock_pinecone_index):
-    """delete_by_doc_id must filter by doc_id and use the correct namespace."""
-    mock_pinecone_index.describe_index_stats.return_value = MagicMock(
-        namespaces={"asset_abc": MagicMock(vector_count=10)}
+    """delete_by_doc_id must list ids by prefix and delete them."""
+    mock_pinecone_index.list.return_value = iter([["vec1", "vec2"]])
+    
+    deleted = pinecone_service.delete_by_doc_id(mock_pinecone_index, "abc", "manual-v2")
+    
+    mock_pinecone_index.list.assert_called_once_with(
+        prefix="abc_manual-v2_",
+        namespace="asset_abc"
     )
-    pinecone_service.delete_by_doc_id(mock_pinecone_index, "abc", "manual-v2")
     mock_pinecone_index.delete.assert_called_once_with(
-        filter={"doc_id": {"$eq": "manual-v2"}},
+        ids=["vec1", "vec2"],
         namespace="asset_abc",
     )
+    assert deleted == 2
 
 
 def test_delete_by_doc_id_returns_zero_when_namespace_empty(mock_pinecone_index):
-    """delete_by_doc_id should return 0 when namespace has no vectors."""
-    mock_pinecone_index.describe_index_stats.return_value = MagicMock(namespaces={})
+    """delete_by_doc_id should return 0 when list yields nothing."""
+    mock_pinecone_index.list.return_value = iter([])
     deleted = pinecone_service.delete_by_doc_id(mock_pinecone_index, "abc", "doc-1")
     assert deleted == 0
+    assert mock_pinecone_index.delete.call_count == 0
 
 
 def test_query_namespace_applies_doc_type_filter(mock_pinecone_index):

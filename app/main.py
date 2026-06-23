@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
         logger.info("pinecone_index_validation_successful", dimension=dimension)
     except Exception as exc:
-        logger.critical("pinecone_index_validation_failed", error=str(exc))
+        logger.critical("pinecone_index_validation_failed", error=type(exc).__name__)
         raise
 
     yield
@@ -154,7 +154,7 @@ def create_app() -> FastAPI:
 
         The key must match API_SECRET_KEY from the environment.
         Uses hmac.compare_digest to prevent timing attacks.
-        This key is shared with the Django asset management system.
+        This key is shared with the enterprise asset management system.
         """
         if request.url.path in _PUBLIC_PATHS:
             return await call_next(request)
@@ -193,9 +193,7 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["health"], summary="Health check")
     async def health_check() -> dict[str, str]:
         """Returns service status. No authentication required."""
-        if settings.app_env == "production":
-            return {"status": "ok"}
-        return {"status": "ok", "env": settings.app_env}
+        return {"status": "ok"}
 
     return app
 

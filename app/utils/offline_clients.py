@@ -406,6 +406,38 @@ class LocalPineconeIndex:
             )
         return QueryResponse(matches=matches)
 
+    def list(self, prefix: str | None = None, namespace: str | None = None, limit: int = 100) -> Any:
+        """Simulate Pinecone's list method, returning a generator of ID lists."""
+        if not namespace or not self.client.collection_exists(collection_name=namespace):
+            return
+
+        offset = None
+        while True:
+            records, next_offset = self.client.scroll(
+                collection_name=namespace,
+                limit=limit,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            if not records:
+                break
+
+            ids_batch = []
+            for r in records:
+                payload = r.payload or {}
+                orig_id = str(payload.get("_original_id", r.id))
+                if prefix is None or orig_id.startswith(prefix):
+                    ids_batch.append(orig_id)
+
+            if ids_batch:
+                yield ids_batch
+
+            if next_offset is None:
+                break
+            offset = next_offset
+
     def describe_index_stats(self) -> IndexStats:
         """Return counts of vectors grouped by namespace (collection)."""
         collections_resp = self.client.get_collections()

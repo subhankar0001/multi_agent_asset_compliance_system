@@ -5,7 +5,7 @@ Used by the audit router to emit progress events and the final verdict
 as newline-delimited JSON (NDJSON), one line per event.
 
 Each event is a typed dataclass that serialises to a JSON dict.
-The Django client reads the stream line-by-line and parses each line
+The backend client reads the stream line-by-line and parses each line
 independently — if one line fails, others are unaffected.
 
 Event types:

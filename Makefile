@@ -62,13 +62,13 @@ sam-local: env-to-json
 # ─────────────────────────────────────────────────────────────────────────────
 
 sam-build:
-	sam build --use-container
+	sam build --template-file deploy/aws-sam/template.yaml --use-container
 
 deploy-staging:
-	sam deploy --config-env staging --no-confirm-changeset
+	sam deploy --config-file deploy/aws-sam/samconfig.toml --config-env staging --no-confirm-changeset
 
 deploy-prod:
-	sam deploy --config-env default
+	sam deploy --config-file deploy/aws-sam/samconfig.toml --config-env default
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Infrastructure

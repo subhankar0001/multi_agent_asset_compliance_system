@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from app.agents.state import AuditState, get_asset_spec_dict
 from app.dependencies import get_verdict_agent_llm
+from app.utils.circuit_breaker import circuit_breaker
 
 logger = structlog.get_logger(__name__)
 
@@ -47,7 +48,7 @@ ASSET: {asset_name} (ID: {asset_id})
 TRIGGERED RULES:
 {triggered_rules}
 
-EVIDENCE BUNDLE (first 20 items):
+EVIDENCE BUNDLE:
 {evidence_bundle}
 
 PREVIOUS VERDICTS (for trend-aware reasoning):
@@ -109,8 +110,7 @@ async def verdict_agent_node(state: AuditState) -> dict[str, Any]:
             asset_name=asset_name,
             asset_id=state["asset_id"],
             triggered_rules=json.dumps(state.get("triggered_rules", []), indent=2),
-            # Limit evidence bundle to first 20 items to stay within token budget
-            evidence_bundle=json.dumps(state.get("evidence_bundle", [])[:20], indent=2),
+            evidence_bundle=json.dumps(state.get("evidence_bundle", []), indent=2),
             previous_verdicts=json.dumps(state.get("previous_verdicts") or [], indent=2),
         )
 
@@ -120,7 +120,8 @@ async def verdict_agent_node(state: AuditState) -> dict[str, Any]:
             HumanMessage(content=prompt),
         ]
 
-        parsed_obj: VerdictOutput = await structured_llm.ainvoke(messages)  # type: ignore[assignment]
+        cb = circuit_breaker("llm", failure_threshold=3, recovery_timeout=60)
+        parsed_obj: VerdictOutput = await cb(structured_llm.ainvoke)(messages)  # type: ignore[assignment]
         parsed = parsed_obj.model_dump()
 
         verdict = {
@@ -148,7 +149,7 @@ async def verdict_agent_node(state: AuditState) -> dict[str, Any]:
         return {"verdict": verdict, "errors": new_errors}
 
     except Exception as exc:
-        logger.error("verdict_agent_error", error=str(exc))
+        logger.error("verdict_agent_error", error=type(exc).__name__)
         err_msg = f"verdict_agent: {exc}"
         new_errors.append(err_msg)
         cumulative_errors.append(err_msg)

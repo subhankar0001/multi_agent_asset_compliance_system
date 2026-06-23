@@ -15,6 +15,8 @@ import structlog
 from ddgs import DDGS
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from app.utils.circuit_breaker import circuit_breaker
+
 logger = structlog.get_logger(__name__)
 
 
@@ -24,23 +26,32 @@ def _run_ddg_search(query: str, max_results: int) -> list[dict[str, Any]]:
         return list(ddgs.text(query, max_results=max_results))
 
 
+@circuit_breaker("ddg", failure_threshold=2, recovery_timeout=120)
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_exponential(multiplier=1, min=1, max=5),
     reraise=True,
 )
+async def _search_internal(query: str, max_results: int) -> list[dict[str, Any]]:
+    """Internal search function with retries and circuit breaking."""
+    return await asyncio.to_thread(_run_ddg_search, query, max_results)
+
+
 async def search(query: str, max_results: int = 5) -> list[dict[str, Any]]:
     """
     Perform a web search via DuckDuckGo and return structured results.
 
     Returns a list of result dicts with keys: url, title, content, score.
-    If DuckDuckGo returns no results, an empty list is returned.
+    If DuckDuckGo returns no results, or if rate-limited, an empty list is returned.
 
     Used as the third-tier fallback in the chat endpoint when both Pinecone
     and asset spec context are insufficient to answer the question.
     """
-    # Run in a threadpool so we don't block the async event loop
-    ddg_results = await asyncio.to_thread(_run_ddg_search, query, max_results)
+    try:
+        ddg_results = await _search_internal(query, max_results)
+    except Exception as exc:
+        logger.warning("web_search_failed_gracefully", error=type(exc).__name__)
+        return []
 
     results = []
     for r in ddg_results:

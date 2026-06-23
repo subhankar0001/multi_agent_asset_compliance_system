@@ -33,6 +33,7 @@ from app.dependencies import ChatLLMDep, EmbeddingsDep, PineconeDep, SettingsDep
 from app.schemas.chat import ChatRequest, ChatResponse, SourceCitation
 from app.services import pinecone_service, web_search_service
 from app.services.embedding_service import embed_query
+from app.utils.circuit_breaker import circuit_breaker
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = structlog.get_logger(__name__)
@@ -66,11 +67,13 @@ def _build_rag_context(chunks: list[dict[str, Any]]) -> str:
     return "\n\n---\n\n".join(blocks)
 
 
+from app.schemas.audit import AssetSpec
+
 def _build_spec_context(
-    asset_spec: dict[str, Any], previous_verdicts: list[dict[str, Any]] | None
+    asset_spec: AssetSpec, previous_verdicts: list[dict[str, Any]] | None
 ) -> str:
     """Format asset spec and previous verdicts as context."""
-    lines = [f"Asset specification:\n{asset_spec}"]
+    lines = [f"Asset specification:\n{asset_spec.model_dump()}"]
     if previous_verdicts:
         lines.append(f"\nPrevious audit verdicts (most recent first):\n{previous_verdicts}")
     return "\n".join(lines)
@@ -134,7 +137,7 @@ async def query_asset(
         log.info("chat_using_asset_spec_fallback", top_score=round(top_score, 4))
 
         # ── Tier 3: Web search augmentation ──────────────────────────────────
-        asset_name = request.asset_spec.get("name", "")
+        asset_name = request.asset_spec.name
         web_results = await web_search_service.search(
             query=f"{asset_name} {request.question}",
             max_results=4,
@@ -160,7 +163,8 @@ async def query_asset(
     messages.append(HumanMessage(content=user_turn))
 
     # Adjust model args dynamically if needed, though init_chat_model already set defaults
-    response = await llm.ainvoke(messages)
+    cb = circuit_breaker("llm", failure_threshold=3, recovery_timeout=60)
+    response = await cb(llm.ainvoke)(messages)
     answer: str = str(response.content)
 
     # Build deduplicated source citations from retrieved chunks

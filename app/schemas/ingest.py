@@ -22,7 +22,7 @@ class S3Document(BaseModel):
         ...,
         min_length=1,
         description=(
-            "Stable identifier for this document assigned by Django. "
+            "Stable identifier for this document assigned by backend client. "
             "The same logical document retains the same doc_id across versions. "
             "Used as the deletion filter key on update events."
         ),
@@ -44,7 +44,7 @@ class S3Document(BaseModel):
 class IngestRequest(BaseModel):
     """Request body for POST /api/v1/ingest."""
 
-    asset_id: str = Field(..., min_length=1, description="UUID of the asset in Django's database")
+    asset_id: str = Field(..., min_length=1, description="UUID of the asset in backend client's database")
     event: Literal["create", "update", "add"] = Field(
         ...,
         description=(
