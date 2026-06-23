@@ -277,8 +277,9 @@ class NamespaceStats:
 class IndexStats:
     """Simulates the index statistics returned by describe_index_stats."""
 
-    def __init__(self, namespaces: dict[str, NamespaceStats]) -> None:
+    def __init__(self, namespaces: dict[str, NamespaceStats], dimension: int = 1536) -> None:
         self.namespaces = namespaces
+        self.dimension = dimension
 
 
 class PineconeMatch:
@@ -412,7 +413,7 @@ class LocalPineconeIndex:
         for col in collections_resp.collections:
             col_info = self.client.get_collection(collection_name=col.name)
             namespaces[col.name] = NamespaceStats(vector_count=col_info.points_count or 0)
-        return IndexStats(namespaces=namespaces)
+        return IndexStats(namespaces=namespaces, dimension=self.embedding_dimensions)
 
     def _translate_filter(self, pinecone_filter: dict[str, Any] | None) -> Filter | None:
         """Translate a Pinecone filter dict into a Qdrant Filter object."""

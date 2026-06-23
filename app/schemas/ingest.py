@@ -13,7 +13,11 @@ from pydantic import BaseModel, Field
 class S3Document(BaseModel):
     """Represents one document stored in S3 that belongs to an asset."""
 
-    s3_key: str = Field(..., description="Full S3 object key (path within the bucket)")
+    s3_key: str = Field(
+        ...,
+        pattern=r'^[a-zA-Z0-9/_\-\.]+$',
+        description="Full S3 object key (path within the bucket)",
+    )
     doc_id: str = Field(
         ...,
         min_length=1,

@@ -15,13 +15,14 @@ by the evidence agent and verdict agent.
 Populates: state["triggered_rules"]
 """
 
+import json
 from typing import Any
 
 import structlog
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
-from app.agents.state import AuditState
+from app.agents.state import AuditState, get_asset_spec_dict
 from app.dependencies import get_rule_agent_llm
 from app.schemas.audit import TriggeredRule
 
@@ -82,11 +83,13 @@ async def rule_agent_node(state: AuditState) -> dict[str, Any]:
     Identify violated compliance rules by cross-referencing findings with documents.
     """
     llm = get_rule_agent_llm()
-    errors: list[str] = list(state.get("errors", []))
+    new_errors: list[str] = []
 
     try:
+        asset_spec_dict = get_asset_spec_dict(state)
+        asset_spec_json = json.dumps(asset_spec_dict, indent=2)
         prompt = _RULE_PROMPT_TEMPLATE.format(
-            asset_spec=state.get("asset_spec", {}),
+            asset_spec=asset_spec_json,
             retrieved_docs=_format_retrieved_docs(state.get("retrieved_chunks", [])),
             image_findings=_format_image_findings(state.get("image_analyses", [])),
             auditor_remarks=state.get("auditor_remarks") or "None provided",
@@ -103,9 +106,9 @@ async def rule_agent_node(state: AuditState) -> dict[str, Any]:
             asset_id=state.get("asset_id"),
             rules_triggered=len(triggered_dicts),
         )
-        return {"triggered_rules": triggered_dicts, "errors": errors}
+        return {"triggered_rules": triggered_dicts, "errors": new_errors}
 
     except Exception as exc:
         logger.error("rule_agent_error", error=str(exc))
-        errors.append(f"rule_agent: {exc}")
-        return {"triggered_rules": [], "errors": errors}
+        new_errors.append(f"rule_agent: {exc}")
+        return {"triggered_rules": [], "errors": new_errors}

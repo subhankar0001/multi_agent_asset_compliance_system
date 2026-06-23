@@ -186,6 +186,7 @@ async def query_asset(
         search_path=search_path,
         sources_count=len(sources),
         web_search_used=web_search_used,
+        business_metric="ChatQueryComplete",
     )
 
     return ChatResponse(

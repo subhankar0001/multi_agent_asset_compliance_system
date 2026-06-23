@@ -59,7 +59,7 @@ os.environ.update(
 from unittest.mock import patch
 
 
-def _create_global_mock_chat_model(*args, **kwargs):
+def _create_mock_chat_model_instance(*args, **kwargs):
     client = AsyncMock()
 
     class MockMessage:
@@ -101,15 +101,15 @@ def _create_global_mock_chat_model(*args, **kwargs):
     return client
 
 
-def _create_global_mock_embeddings(*args, **kwargs):
+def _create_mock_embeddings_instance(*args, **kwargs):
     client = AsyncMock()
     client.aembed_documents = AsyncMock(side_effect=lambda texts: [[0.1] * 1536 for _ in texts])
     client.aembed_query = AsyncMock(return_value=[0.1] * 1536)
     return client
 
 
-patch("langchain.chat_models.init_chat_model", side_effect=_create_global_mock_chat_model).start()
-patch("langchain.embeddings.init_embeddings", side_effect=_create_global_mock_embeddings).start()
+patch("langchain.chat_models.init_chat_model", side_effect=_create_mock_chat_model_instance).start()
+patch("langchain.embeddings.init_embeddings", side_effect=_create_mock_embeddings_instance).start()
 
 
 # ── AWS fixtures ──────────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ def mock_pinecone_index():
     index.upsert = MagicMock(return_value=MagicMock(upserted_count=5))
     index.delete = MagicMock()
     index.query = MagicMock(return_value=MagicMock(matches=[]))
-    index.describe_index_stats = MagicMock(return_value=MagicMock(namespaces={}))
+    index.describe_index_stats = MagicMock(return_value=MagicMock(namespaces={}, dimension=1536))
     return index
 
 
@@ -170,59 +170,13 @@ def mock_dynamodb_table():
 @pytest.fixture()
 def mock_chat_model():
     """Provide a mocked async ChatModel returning valid compliance JSON/Text."""
-    client = AsyncMock()
-
-    # Mock ainvoke to return an AIMessage-like object
-    class MockMessage:
-        def __init__(self, content):
-            self.content = content
-
-    client.ainvoke = AsyncMock(
-        return_value=MockMessage(
-            '{"compliance_status": "COMPLIANT", '
-            '"confidence": 0.95, '
-            '"recommendations": [], '
-            '"verdict_reasoning": "All checks passed."}'
-        )
-    )
-
-    # Also mock with_structured_output to return self or another mock that returns an object
-    class MockStructuredOutput:
-        async def ainvoke(self, *args, **kwargs):
-            # We'll just return a magic mock that matches what the agents expect
-            m = MagicMock()
-            m.findings = []
-            m.labels = []
-            m.condition = "fair"
-            m.raw_description = "A mock image analysis."
-
-            m.triggered_rules = []
-
-            m.compliance_status = "COMPLIANT"
-            m.confidence = 0.95
-            m.recommendations = []
-            m.verdict_reasoning = "All checks passed."
-            m.model_dump = MagicMock(
-                return_value={
-                    "compliance_status": "COMPLIANT",
-                    "confidence": 0.95,
-                    "recommendations": [],
-                    "verdict_reasoning": "All checks passed.",
-                }
-            )
-            return m
-
-    client.with_structured_output = MagicMock(return_value=MockStructuredOutput())
-    return client
+    return _create_mock_chat_model_instance()
 
 
 @pytest.fixture()
 def mock_embeddings_model():
     """Provide a mocked Langchain Embeddings model returning 1536-dim zero vectors."""
-    client = AsyncMock()
-    client.aembed_documents = AsyncMock(side_effect=lambda texts: [[0.1] * 1536 for _ in texts])
-    client.aembed_query = AsyncMock(return_value=[0.1] * 1536)
-    return client
+    return _create_mock_embeddings_instance()
 
 
 @pytest.fixture()

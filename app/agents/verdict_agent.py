@@ -20,7 +20,7 @@ import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from app.agents.state import AuditState
+from app.agents.state import AuditState, get_asset_spec_dict
 from app.dependencies import get_verdict_agent_llm
 
 logger = structlog.get_logger(__name__)
@@ -58,21 +58,25 @@ Use INSUFFICIENT_DATA if there is not enough evidence to reach a reliable conclu
 
 async def verdict_agent_node(state: AuditState) -> dict[str, Any]:
     """
-    Generate the final compliance verdict using structured output.
+    Generate the final compliance compliance verdict using structured output.
     """
     llm = get_verdict_agent_llm()
-    errors: list[str] = list(state.get("errors", []))
+    new_errors: list[str] = []
+    cumulative_errors: list[str] = list(state.get("errors", []))
     generated_at = datetime.now(UTC).isoformat()
 
     try:
+        asset_spec_dict = get_asset_spec_dict(state)
+        asset_name = asset_spec_dict.get("name") or "Unknown Asset"
+
         # Check if there are no document embeddings found in the system for this asset
         retrieved_chunks = state.get("retrieved_chunks", [])
         if not retrieved_chunks:
             no_docs_error = "No reference compliance document embeddings found in the vector database for this asset namespace."
-            if no_docs_error not in errors:
-                errors.append(no_docs_error)
+            if no_docs_error not in cumulative_errors:
+                cumulative_errors.append(no_docs_error)
+            new_errors.append(no_docs_error)
 
-            asset_name = state.get("asset_spec", {}).get("name", "Unknown Asset")
             verdict = {
                 "asset_id": state["asset_id"],
                 "run_id": state["run_id"],
@@ -90,7 +94,7 @@ async def verdict_agent_node(state: AuditState) -> dict[str, Any]:
                 ),
                 "documents_consulted": [],
                 "generated_at": generated_at,
-                "errors": errors if errors else None,
+                "errors": cumulative_errors if cumulative_errors else None,
             }
             logger.info(
                 "verdict_agent_no_embeddings_fallback",
@@ -99,10 +103,10 @@ async def verdict_agent_node(state: AuditState) -> dict[str, Any]:
                 compliance_status=verdict["compliance_status"],
                 reason="No embeddings found for asset namespace",
             )
-            return {"verdict": verdict, "errors": errors}
+            return {"verdict": verdict, "errors": new_errors}
 
         prompt = _VERDICT_PROMPT_TEMPLATE.format(
-            asset_name=state.get("asset_spec", {}).get("name", "Unknown Asset"),
+            asset_name=asset_name,
             asset_id=state["asset_id"],
             triggered_rules=json.dumps(state.get("triggered_rules", []), indent=2),
             # Limit evidence bundle to first 20 items to stay within token budget
@@ -130,7 +134,7 @@ async def verdict_agent_node(state: AuditState) -> dict[str, Any]:
             "verdict_reasoning": parsed.get("verdict_reasoning", ""),
             "documents_consulted": state.get("documents_consulted", []),
             "generated_at": generated_at,
-            "errors": errors if errors else None,
+            "errors": cumulative_errors if cumulative_errors else None,
         }
 
         logger.info(
@@ -141,11 +145,13 @@ async def verdict_agent_node(state: AuditState) -> dict[str, Any]:
             confidence=verdict["confidence"],
             rules_triggered=len(state.get("triggered_rules", [])),
         )
-        return {"verdict": verdict, "errors": errors}
+        return {"verdict": verdict, "errors": new_errors}
 
     except Exception as exc:
         logger.error("verdict_agent_error", error=str(exc))
-        errors.append(f"verdict_agent: {exc}")
+        err_msg = f"verdict_agent: {exc}"
+        new_errors.append(err_msg)
+        cumulative_errors.append(err_msg)
 
     # Fallback verdict — always return a well-formed response
     fallback_verdict = {
@@ -159,6 +165,6 @@ async def verdict_agent_node(state: AuditState) -> dict[str, Any]:
         "verdict_reasoning": "The automated verdict generation encountered an error. Manual review is required.",
         "documents_consulted": state.get("documents_consulted", []),
         "generated_at": generated_at,
-        "errors": errors,
+        "errors": cumulative_errors,
     }
-    return {"verdict": fallback_verdict, "errors": errors}
+    return {"verdict": fallback_verdict, "errors": new_errors}

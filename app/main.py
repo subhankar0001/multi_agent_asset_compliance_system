@@ -21,18 +21,19 @@ Security:
 """
 
 import hmac
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 import structlog
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from mangum import Mangum
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from starlette.middleware.base import RequestResponseEndpoint
 
 from app.api.v1.router import api_router
 from app.config import get_settings
@@ -52,7 +53,7 @@ _PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Application lifespan: configure logging on startup."""
+    """Application lifespan: configure logging and validate Pinecone index dimension on startup."""
     configure_logging(level=settings.log_level)
     logger.info(
         "asset_compliance_ai_starting",
@@ -65,6 +66,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "chat": settings.rate_limit_chat,
         },
     )
+
+    # Validate Pinecone index dimension at cold start
+    try:
+        from app.dependencies import _get_pinecone_index
+        index = _get_pinecone_index()
+        stats = index.describe_index_stats()
+        dimension = getattr(stats, "dimension", None)
+        if dimension is None and isinstance(stats, dict):
+            dimension = stats.get("dimension")
+
+        if dimension is not None and dimension != settings.embedding_dimensions:
+            raise ValueError(
+                f"Pinecone index dimension mismatch: Index has dimension {dimension}, "
+                f"but application expected {settings.embedding_dimensions}."
+            )
+        logger.info("pinecone_index_validation_successful", dimension=dimension)
+    except Exception as exc:
+        logger.critical("pinecone_index_validation_failed", error=str(exc))
+        raise
+
     yield
     logger.info("asset_compliance_ai_shutting_down")
 
@@ -110,9 +131,24 @@ def create_app() -> FastAPI:
         asset_compliance_exception_handler,  # type: ignore[arg-type]
     )
 
+    # ── Correlation ID middleware ──────────────────────────────────────────────
+    @app.middleware("http")
+    async def request_id_middleware(request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """
+        Extract X-Request-ID header or generate a new UUID.
+        Bind it to structlog contextvars so all logs in this request share it.
+        """
+        structlog.contextvars.clear_contextvars()
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        structlog.contextvars.bind_contextvars(request_id=request_id)
+        
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
     # ── API key middleware ─────────────────────────────────────────────────────
     @app.middleware("http")
-    async def api_key_auth(request: Request, call_next: Any) -> Any:
+    async def api_key_auth(request: Request, call_next: RequestResponseEndpoint) -> Response:
         """
         Validate X-API-Key header on all non-public routes.
 
@@ -157,6 +193,8 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["health"], summary="Health check")
     async def health_check() -> dict[str, str]:
         """Returns service status. No authentication required."""
+        if settings.app_env == "production":
+            return {"status": "ok"}
         return {"status": "ok", "env": settings.app_env}
 
     return app

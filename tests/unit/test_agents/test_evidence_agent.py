@@ -61,12 +61,12 @@ async def test_evidence_agent_document_evidence_fields():
 
 @pytest.mark.asyncio
 async def test_evidence_agent_image_evidence_fields():
-    """Image evidence should include s3_key and image_finding."""
+    """Image evidence should include s3_key and finding."""
     result = await evidence_agent_node(_make_state())
     img_evidence = [e for e in result["evidence_bundle"] if e["source_type"] == "image"]
     assert len(img_evidence) >= 1
     assert img_evidence[0]["s3_key"] == "audits/img.jpg"
-    assert img_evidence[0]["image_finding"] == "Missing pressure label"
+    assert img_evidence[0]["finding"] == "Missing pressure label"
 
 
 @pytest.mark.asyncio

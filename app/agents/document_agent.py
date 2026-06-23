@@ -16,9 +16,9 @@ from typing import Any
 
 import structlog
 
-from app.agents.state import AuditState, RetrievedChunk
+from app.agents.state import AuditState, RetrievedChunk, get_asset_spec_dict
 from app.config import get_settings
-from app.dependencies import _get_embeddings_model, _get_pinecone_index
+from app.dependencies import get_embeddings, get_pinecone_index
 from app.services import pinecone_service
 from app.services.embedding_service import embed_query
 
@@ -38,18 +38,18 @@ async def document_agent_node(state: AuditState) -> dict[str, Any]:
         On error: also sets errors key
     """
     settings = get_settings()
-    index = _get_pinecone_index()
-    embeddings = _get_embeddings_model()
+    index = get_pinecone_index()
+    embeddings = get_embeddings()
 
     asset_id = state["asset_id"]
-    asset_spec = state.get("asset_spec", {})
+    asset_spec_dict = get_asset_spec_dict(state)
     auditor_remarks = state.get("auditor_remarks") or ""
 
     # Build a rich query that spans all relevant compliance topics
     query_text = (
-        f"Asset: {asset_spec.get('name', '')} "
-        f"Category: {asset_spec.get('category', '')} "
-        f"Manufacturer: {asset_spec.get('manufacturer', '')} "
+        f"Asset: {asset_spec_dict.get('name', '')} "
+        f"Category: {asset_spec_dict.get('category', '')} "
+        f"Manufacturer: {asset_spec_dict.get('manufacturer', '')} "
         f"Auditor remarks: {auditor_remarks or 'none'} "
         "Compliance requirements, safety specifications, installation procedures, "
         "maintenance standards, inspection criteria, and regulatory obligations."
@@ -87,9 +87,8 @@ async def document_agent_node(state: AuditState) -> dict[str, Any]:
 
     except Exception as exc:
         logger.error("document_agent_error", asset_id=asset_id, error=str(exc))
-        existing_errors: list[str] = list(state.get("errors", []))
         return {
             "retrieved_chunks": [],
             "documents_consulted": [],
-            "errors": [*existing_errors, f"document_agent: {exc}"],
+            "errors": [f"document_agent: {exc}"],
         }

@@ -25,6 +25,11 @@ from app.agents.state import AuditState
 from app.agents.verdict_agent import verdict_agent_node
 
 
+def start_node(state: AuditState) -> dict[str, Any]:
+    """Dummy start node to orchestrate parallel execution of agents."""
+    return {}
+
+
 def build_audit_graph() -> Any:
     """
     Construct and compile the LangGraph StateGraph for audit runs.
@@ -35,15 +40,18 @@ def build_audit_graph() -> Any:
     graph: StateGraph = StateGraph(AuditState)
 
     # Register agent nodes
+    graph.add_node("start", start_node)
     graph.add_node("document_agent", document_agent_node)
     graph.add_node("image_agent", image_agent_node)
     graph.add_node("rule_agent", rule_agent_node)
     graph.add_node("evidence_agent", evidence_agent_node)
     graph.add_node("verdict_agent", verdict_agent_node)
 
-    # Wire up the sequential pipeline
-    graph.set_entry_point("document_agent")
-    graph.add_edge("document_agent", "image_agent")
+    # Wire up the parallel and sequential pipeline
+    graph.set_entry_point("start")
+    graph.add_edge("start", "document_agent")
+    graph.add_edge("start", "image_agent")
+    graph.add_edge("document_agent", "rule_agent")
     graph.add_edge("image_agent", "rule_agent")
     graph.add_edge("rule_agent", "evidence_agent")
     graph.add_edge("evidence_agent", "verdict_agent")

@@ -226,3 +226,41 @@ async def test_audit_run_in_progress_returns_409():
     assert response.status_code == 409
     body = response.json()
     assert body["detail"]["code"] == "AUDIT_IN_PROGRESS"
+
+
+@pytest.mark.asyncio
+async def test_audit_run_invalid_asset_spec():
+    """QA-5: POST /audit/run with invalid asset_spec should return 422."""
+    app = create_app()
+    payload = _SAMPLE_AUDIT_PAYLOAD.copy()
+    payload["asset_spec"] = {"invalid": "missing name and category"}
+    
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/audit/run",
+            json=payload,
+            headers=_HEADERS,
+        )
+    
+    assert response.status_code == 422
+    body = response.json()
+    assert "asset_spec" in str(body["detail"])
+
+
+@pytest.mark.asyncio
+async def test_audit_run_oversized_auditor_remarks():
+    """QA-5: POST /audit/run with oversized auditor_remarks should return 422."""
+    app = create_app()
+    payload = _SAMPLE_AUDIT_PAYLOAD.copy()
+    payload["auditor_remarks"] = "A" * 5001  # Max is 5000
+    
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/audit/run",
+            json=payload,
+            headers=_HEADERS,
+        )
+    
+    assert response.status_code == 422
+    body = response.json()
+    assert "auditor_remarks" in str(body["detail"])

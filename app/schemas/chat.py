@@ -46,6 +46,7 @@ class ChatRequest(BaseModel):
     )
     doc_type_filter: str | None = Field(
         default=None,
+        pattern=r'^[a-zA-Z0-9/_\-\.]+$',
         description=(
             "Optional: restrict RAG retrieval to one doc_type. "
             "e.g. 'safety_sheet', 'user_manual'. "

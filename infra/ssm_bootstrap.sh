@@ -65,10 +65,17 @@ FAILED=0
 for param in "${PARAMS[@]}"; do
   IFS=':' read -r name value type <<< "$param"
 
-  # Handle empty params by setting them to a dummy value so AWS SAM deploy doesn't fail
+  # Handle empty params
   if [ -z "$value" ]; then
-    echo "  WARN  ${PREFIX}/${name} is empty. Bootstrapping with 'not_configured'."
-    value="not_configured"
+    # Optional parameters can be bootstrapped as not_configured
+    if [[ "$name" =~ ^(anthropic_api_key|openai_api_key|google_api_key|xai_api_key|langchain_api_key)$ ]]; then
+      echo "  WARN  ${PREFIX}/${name} is empty. Bootstrapping with 'not_configured'."
+      value="not_configured"
+    else
+      echo "  ✗  FAILED: ${PREFIX}/${name} is required but empty in .env"
+      FAILED=$((FAILED + 1))
+      continue
+    fi
   fi
 
   if aws ssm put-parameter \

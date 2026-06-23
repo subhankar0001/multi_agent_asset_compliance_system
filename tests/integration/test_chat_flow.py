@@ -174,3 +174,33 @@ async def test_chat_with_doc_type_filter(
     # Verify the filter was passed to Pinecone
     call_kwargs = mock_pinecone_index.query.call_args.kwargs
     assert call_kwargs.get("filter") == {"doc_type": {"$eq": "safety_sheet"}}
+
+
+@pytest.mark.asyncio
+async def test_chat_history_overflow_rejected(
+    mock_pinecone_index, mock_embeddings_model, mock_chat_model
+):
+    """POST /chat/query with >50 conversation history messages should return 422 validation error."""
+    # 51 messages
+    history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"message {i}"}
+        for i in range(51)
+    ]
+    payload = {**_CHAT_PAYLOAD, "conversation_history": history}
+
+    app = create_app()
+    with (
+        patch("app.dependencies._get_pinecone_index", return_value=mock_pinecone_index),
+        patch("app.dependencies._get_embeddings_model", return_value=mock_embeddings_model),
+        patch("app.dependencies._get_agent_llm", return_value=mock_chat_model),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/chat/query",
+                json=payload,
+                headers=_HEADERS,
+            )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert "conversation_history" in str(body["detail"])

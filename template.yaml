@@ -3,8 +3,8 @@ Transform: AWS::Serverless-2016-10-31
 
 Description: >
   Asset Compliance AI — Serverless LangGraph microservice for automated
-  physical asset compliance auditing. Deployed as a single Lambda function
-  with response streaming enabled.
+  physical asset compliance auditing. Deployed as split Lambda functions
+  optimized for ingestion, auditing, and chat workloads.
 
 Globals:
   Function:
@@ -34,15 +34,215 @@ Parameters:
 
 Resources:
 
-  # ── Lambda Function ─────────────────────────────────────────────────────────
-  ComplianceFunction:
+  # ── Ingest Lambda Function ──────────────────────────────────────────────────
+  IngestFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "asset-compliance-ai-${AppEnv}"
+      FunctionName: !Sub "asset-compliance-ingest-${AppEnv}"
+      CodeUri: app/
+      Handler: main.handler
+      MemorySize: 1536     # Optimized for ingestion workloads
+      Timeout: 300         # 5 minutes
+      ReservedConcurrentExecutions: 50
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt LambdaDLQ.Arn
+      FunctionUrlConfig:
+        AuthType: AWS_IAM  # IAM-authenticated — no unauthenticated access
+        InvokeMode: BUFFERED
+        Cors:
+          AllowOrigins:
+            - "*"
+          AllowMethods:
+            - POST
+            - GET
+          AllowHeaders:
+            - Content-Type
+            - Authorization
+            - X-API-Key
+            - X-Request-ID
+      Environment:
+        Variables:
+          APP_ENV: !Ref AppEnv
+          AWS_REGION: !Ref AWS::Region
+          S3_BUCKET_NAME: !Ref AssetDocsBucket
+          # All secrets resolved from SSM Parameter Store at deploy time
+          PINECONE_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/pinecone_api_key}}"
+          PINECONE_INDEX_NAME:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/pinecone_index_name}}"
+          PINECONE_ENVIRONMENT:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/pinecone_environment}}"
+          ANTHROPIC_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/anthropic_api_key}}"
+          OPENAI_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/openai_api_key}}"
+          GOOGLE_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/google_api_key}}"
+          XAI_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/xai_api_key}}"
+          
+          IMAGE_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/image_agent_provider}}"
+          IMAGE_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/image_agent_model}}"
+          RULE_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/rule_agent_provider}}"
+          RULE_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/rule_agent_model}}"
+          VERDICT_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/verdict_agent_provider}}"
+          VERDICT_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/verdict_agent_model}}"
+          CHAT_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/chat_agent_provider}}"
+          CHAT_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/chat_agent_model}}"
+          
+          LLM_MAX_TOKENS: "4096"
+          LLM_CHAT_MAX_TOKENS: "1024"
+          EMBEDDING_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/embedding_provider}}"
+          EMBEDDING_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/embedding_model}}"
+          EMBEDDING_DIMENSIONS: "1536"
+
+          DYNAMODB_AUDIT_TABLE: !Ref AuditRunsTable
+
+          LANGCHAIN_TRACING_V2: "true"
+          LANGCHAIN_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/langchain_api_key}}"
+          LANGCHAIN_PROJECT: "asset-compliance-ai"
+          API_SECRET_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/api_secret_key}}"
+          RETRIEVAL_TOP_K_AUDIT: "20"
+          RETRIEVAL_TOP_K_CHAT: "12"
+          CHUNK_SIZE: "512"
+          CHUNK_OVERLAP: "64"
+      Policies:
+        # Read-only access to the asset docs S3 bucket
+        - S3ReadPolicy:
+            BucketName: !Ref AssetDocsBucket
+        # Read/write to the audit run idempotency DynamoDB table
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditRunsTable
+        # Read SSM parameters for this environment
+        - SSMParameterReadPolicy:
+            ParameterName: !Sub "/asset-compliance/${AppEnv}/*"
+        # CloudWatch Lambda Insights for enhanced monitoring
+        - CloudWatchLambdaInsightsExecutionRolePolicy
+
+  # ── Audit Lambda Function ──────────────────────────────────────────────────
+  AuditFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "asset-compliance-audit-${AppEnv}"
       CodeUri: app/
       Handler: main.handler
       MemorySize: 3008     # Maximum memory for long audit runs
       Timeout: 900         # 15 minutes — LangGraph pipeline can be long
+      ReservedConcurrentExecutions: 50
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt LambdaDLQ.Arn
+      FunctionUrlConfig:
+        AuthType: AWS_IAM  # IAM-authenticated — no unauthenticated access
+        InvokeMode: RESPONSE_STREAM
+        Cors:
+          AllowOrigins:
+            - "*"
+          AllowMethods:
+            - POST
+            - GET
+          AllowHeaders:
+            - Content-Type
+            - Authorization
+            - X-API-Key
+            - X-Request-ID
+      Environment:
+        Variables:
+          APP_ENV: !Ref AppEnv
+          AWS_REGION: !Ref AWS::Region
+          S3_BUCKET_NAME: !Ref AssetDocsBucket
+          # All secrets resolved from SSM Parameter Store at deploy time
+          PINECONE_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/pinecone_api_key}}"
+          PINECONE_INDEX_NAME:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/pinecone_index_name}}"
+          PINECONE_ENVIRONMENT:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/pinecone_environment}}"
+          ANTHROPIC_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/anthropic_api_key}}"
+          OPENAI_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/openai_api_key}}"
+          GOOGLE_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/google_api_key}}"
+          XAI_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/xai_api_key}}"
+          
+          IMAGE_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/image_agent_provider}}"
+          IMAGE_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/image_agent_model}}"
+          RULE_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/rule_agent_provider}}"
+          RULE_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/rule_agent_model}}"
+          VERDICT_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/verdict_agent_provider}}"
+          VERDICT_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/verdict_agent_model}}"
+          CHAT_AGENT_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/chat_agent_provider}}"
+          CHAT_AGENT_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/chat_agent_model}}"
+          
+          LLM_MAX_TOKENS: "4096"
+          LLM_CHAT_MAX_TOKENS: "1024"
+          EMBEDDING_PROVIDER:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/embedding_provider}}"
+          EMBEDDING_MODEL:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/embedding_model}}"
+          EMBEDDING_DIMENSIONS: "1536"
+
+          DYNAMODB_AUDIT_TABLE: !Ref AuditRunsTable
+
+          LANGCHAIN_TRACING_V2: "true"
+          LANGCHAIN_API_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/langchain_api_key}}"
+          LANGCHAIN_PROJECT: "asset-compliance-ai"
+          API_SECRET_KEY:
+            !Sub "{{resolve:ssm:/asset-compliance/${AppEnv}/api_secret_key}}"
+          RETRIEVAL_TOP_K_AUDIT: "20"
+          RETRIEVAL_TOP_K_CHAT: "12"
+          CHUNK_SIZE: "512"
+          CHUNK_OVERLAP: "64"
+      Policies:
+        # Read-only access to the asset docs S3 bucket
+        - S3ReadPolicy:
+            BucketName: !Ref AssetDocsBucket
+        # Read/write to the audit run idempotency DynamoDB table
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AuditRunsTable
+        # Read SSM parameters for this environment
+        - SSMParameterReadPolicy:
+            ParameterName: !Sub "/asset-compliance/${AppEnv}/*"
+        # CloudWatch Lambda Insights for enhanced monitoring
+        - CloudWatchLambdaInsightsExecutionRolePolicy
+
+  # ── Chat Lambda Function ────────────────────────────────────────────────────
+  ChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "asset-compliance-chat-${AppEnv}"
+      CodeUri: app/
+      Handler: main.handler
+      MemorySize: 1536     # Optimized for conversational chat workloads
+      Timeout: 60          # 1 minute
+      ReservedConcurrentExecutions: 100
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt LambdaDLQ.Arn
       FunctionUrlConfig:
         AuthType: AWS_IAM  # IAM-authenticated — no unauthenticated access
         InvokeMode: RESPONSE_STREAM
@@ -196,12 +396,126 @@ Resources:
     Metadata:
       BuildMethod: python3.12
 
+  # ── Dead Letter Queue ────────────────────────────────────────────────────────
+  LambdaDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "asset-compliance-dlq-${AppEnv}"
+      MessageRetentionPeriod: 1209600 # 14 days
+      KmsMasterKeyId: alias/aws/sqs # Encryption at rest
+
+  # ── CloudWatch Alarms ────────────────────────────────────────────────────────
+  IngestErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Ingest Lambda Function Errors"
+      Namespace: "AWS/Lambda"
+      MetricName: "Errors"
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref IngestFunction
+      Statistic: Sum
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      EvaluationPeriods: 1
+      Period: 60
+
+  AuditErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Audit Lambda Function Errors"
+      Namespace: "AWS/Lambda"
+      MetricName: "Errors"
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AuditFunction
+      Statistic: Sum
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      EvaluationPeriods: 1
+      Period: 60
+
+  ChatErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Chat Lambda Function Errors"
+      Namespace: "AWS/Lambda"
+      MetricName: "Errors"
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ChatFunction
+      Statistic: Sum
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      EvaluationPeriods: 1
+      Period: 60
+
+  # ── CloudWatch Dashboard ─────────────────────────────────────────────────────
+  OpsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "asset-compliance-ops-${AppEnv}"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Errors", "FunctionName", "${IngestFunction}" ],
+                  [ ".", ".", ".", "${AuditFunction}" ],
+                  [ ".", ".", ".", "${ChatFunction}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Lambda Errors"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${IngestFunction}" ],
+                  [ ".", ".", ".", "${AuditFunction}" ],
+                  [ ".", ".", ".", "${ChatFunction}" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Lambda Duration",
+                "stat": "Average"
+              }
+            }
+          ]
+        }
+
 Outputs:
-  ComplianceFunctionUrl:
-    Description: Lambda Function URL (IAM-authenticated, streaming)
-    Value: !GetAtt ComplianceFunctionUrl.FunctionUrl
+  IngestFunctionUrl:
+    Description: Ingest Lambda Function URL (IAM-authenticated, buffered)
+    Value: !GetAtt IngestFunctionUrl.FunctionUrl
     Export:
-      Name: !Sub "asset-compliance-ai-${AppEnv}-url"
+      Name: !Sub "asset-compliance-ingest-${AppEnv}-url"
+
+  AuditFunctionUrl:
+    Description: Audit Lambda Function URL (IAM-authenticated, streaming)
+    Value: !GetAtt AuditFunctionUrl.FunctionUrl
+    Export:
+      Name: !Sub "asset-compliance-audit-${AppEnv}-url"
+
+  ChatFunctionUrl:
+    Description: Chat Lambda Function URL (IAM-authenticated, streaming)
+    Value: !GetAtt ChatFunctionUrl.FunctionUrl
+    Export:
+      Name: !Sub "asset-compliance-chat-${AppEnv}-url"
 
   AssetDocsBucketName:
     Description: S3 bucket name for asset documents and audit images
@@ -209,8 +523,20 @@ Outputs:
     Export:
       Name: !Sub "asset-compliance-ai-${AppEnv}-bucket"
 
-  ComplianceFunctionArn:
-    Description: Lambda function ARN
-    Value: !GetAtt ComplianceFunction.Arn
+  IngestFunctionArn:
+    Description: Ingest Lambda function ARN
+    Value: !GetAtt IngestFunction.Arn
     Export:
-      Name: !Sub "asset-compliance-ai-${AppEnv}-arn"
+      Name: !Sub "asset-compliance-ingest-${AppEnv}-arn"
+
+  AuditFunctionArn:
+    Description: Audit Lambda function ARN
+    Value: !GetAtt AuditFunction.Arn
+    Export:
+      Name: !Sub "asset-compliance-audit-${AppEnv}-arn"
+
+  ChatFunctionArn:
+    Description: Chat Lambda function ARN
+    Value: !GetAtt ChatFunction.Arn
+    Export:
+      Name: !Sub "asset-compliance-chat-${AppEnv}-arn"

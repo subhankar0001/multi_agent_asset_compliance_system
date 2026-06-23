@@ -56,11 +56,11 @@ async def image_agent_node(state: AuditState) -> dict[str, Any]:
     s3_client = get_s3_client()
 
     analyses: list[ImageAnalysis] = []
-    errors: list[str] = list(state.get("errors", []))
+    new_errors: list[str] = []
 
     for s3_key in state.get("s3_image_keys", []):
         try:
-            image_b64 = s3_service.download_as_base64(s3_client, settings.s3_bucket_name, s3_key)
+            image_b64 = await s3_service.download_as_base64(s3_client, settings.s3_bucket_name, s3_key)
             filename = s3_key.rsplit("/", 1)[-1]
             media_type = s3_service.infer_media_type(filename)
 
@@ -96,11 +96,11 @@ async def image_agent_node(state: AuditState) -> dict[str, Any]:
 
         except Exception as exc:
             logger.error("image_agent_error", s3_key=s3_key, error=str(exc))
-            errors.append(f"image_agent: {s3_key}: {exc}")
+            new_errors.append(f"image_agent: {s3_key}: {exc}")
 
     logger.info(
         "image_agent_complete",
         images_analysed=len(analyses),
-        errors_count=len(errors),
+        errors_count=len(new_errors),
     )
-    return {"image_analyses": analyses, "errors": errors}
+    return {"image_analyses": analyses, "errors": new_errors}

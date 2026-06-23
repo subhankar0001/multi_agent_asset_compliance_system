@@ -100,6 +100,7 @@ async def _stream_audit(
 
         # Persist the verdict so future retries return the cached result
         if final_verdict is not None:
+            logger.info("compliance_verdict_issued", verdict=final_verdict["compliance_status"], business_metric="ComplianceVerdictIssued")
             dynamodb_service.complete_audit_run(
                 dynamodb_client, table_name, request.run_id, final_verdict
             )
@@ -137,7 +138,7 @@ async def run_audit(
 ) -> StreamingResponse | JSONResponse:
     """Start the multi-agent audit pipeline and stream results, with idempotency."""
     log = logger.bind(asset_id=audit_request.asset_id, run_id=audit_request.run_id)
-    log.info("audit_run_requested", images=len(audit_request.s3_image_keys))
+    log.info("audit_run_requested", images=len(audit_request.s3_image_keys), business_metric="AuditRunRequested")
 
     # ── Idempotency check ──────────────────────────────────────────────────────
     existing = dynamodb_service.get_audit_run(

@@ -18,8 +18,12 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, status
+from langchain_core.embeddings import Embeddings
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
+from pinecone import Index
 
+from app.config import Settings
 from app.dependencies import EmbeddingsDep, ImageLLMDep, PineconeDep, S3Dep, SettingsDep
 from app.schemas.ingest import IngestRequest, IngestResponse, S3Document
 from app.services import document_loader, pinecone_service, s3_service
@@ -30,9 +34,9 @@ logger = structlog.get_logger(__name__)
 
 
 async def _describe_image(
-    image_llm: Any,
+    image_llm: BaseChatModel,
     s3_client: Any,
-    settings: Any,
+    settings: Settings,
     document: S3Document,
     asset_id: str,
 ) -> str:
@@ -42,7 +46,7 @@ async def _describe_image(
     The description is stored as the vector's text in Pinecone, allowing
     image documents to participate in semantic retrieval.
     """
-    image_b64 = s3_service.download_as_base64(s3_client, settings.s3_bucket_name, document.s3_key)
+    image_b64 = await s3_service.download_as_base64(s3_client, settings.s3_bucket_name, document.s3_key)
     media_type = s3_service.infer_media_type(document.filename)
     image_url = f"data:{media_type};base64,{image_b64}"
 
@@ -76,11 +80,11 @@ async def _describe_image(
 async def _ingest_document(
     document: S3Document,
     asset_id: str,
-    index: Any,
+    index: Index,
     s3_client: Any,
-    embeddings: Any,
-    image_llm: Any,
-    settings: Any,
+    embeddings: Embeddings,
+    image_llm: BaseChatModel,
+    settings: Settings,
 ) -> int:
     """
     Ingest a single document: download → chunk → embed → upsert.
@@ -92,7 +96,7 @@ async def _ingest_document(
         description = await _describe_image(image_llm, s3_client, settings, document, asset_id)
         chunks = document_loader.load_image_document(document, asset_id, description)
     else:
-        raw = s3_service.download_bytes(s3_client, settings.s3_bucket_name, document.s3_key)
+        raw = await s3_service.download_bytes(s3_client, settings.s3_bucket_name, document.s3_key)
         chunks = document_loader.load_pdf(raw, document, asset_id)
 
     if not chunks:
@@ -195,6 +199,7 @@ async def ingest_documents(
         documents_processed=len(request.documents),
         vectors_upserted=total_upserted,
         vectors_deleted=total_deleted,
+        business_metric="IngestionVolume",
     )
 
     return IngestResponse(

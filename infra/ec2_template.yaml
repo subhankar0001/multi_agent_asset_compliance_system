@@ -1,0 +1,218 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Asset Compliance AI — CloudFormation template for deploying the unified FastAPI
+  application onto a single standalone EC2 server with Docker and secure IAM permissions.
+
+Parameters:
+  AppEnv:
+    Type: String
+    Default: production
+    AllowedValues: [development, staging, production]
+    Description: Deployment environment.
+
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.micro, t3.small, t3.medium, t3.large]
+    Description: EC2 instance type.
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The VPC ID where the EC2 instance will be deployed.
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public Subnet ID where the EC2 instance will be deployed (requires MapPublicIpOnLaunch enabled or EIP).
+
+  KeyName:
+    Type: String
+    Description: Optional EC2 Key Pair name for SSH access (leave empty if using Session Manager).
+    Default: ""
+
+  SSHLocation:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: Allowed CIDR block for SSH access (e.g. 203.0.113.5/32).
+
+  GitRepositoryUrl:
+    Type: String
+    Default: "https://github.com/chiku-tech/multi_agent_asset_compliance_system.git"
+    Description: Git repository URL containing the application code and Dockerfile.
+
+  AssetDocsBucketName:
+    Type: String
+    Description: Existing S3 bucket name containing asset documents and images.
+
+  AuditRunsTableName:
+    Type: String
+    Description: Existing DynamoDB table name for tracking audit runs.
+
+  LatestAmiId:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+    Description: SSM parameter path to resolve the latest Amazon Linux 2023 AMI.
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
+
+Resources:
+
+  # ── IAM Role and Instance Profile ───────────────────────────────────────────
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ec2.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+      ManagedPolicyArns:
+        # Enable Systems Manager (SSM) Session Manager for secure SSH-free terminal access
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: S3ReadAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:aws:s3:::${AssetDocsBucketName}"
+                  - !Sub "arn:aws:aws:s3:::${AssetDocsBucketName}/*"
+        - PolicyName: DynamoDBCrudAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub "arn:aws:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AuditRunsTableName}"
+                  - !Sub "arn:aws:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AuditRunsTableName}/index/*"
+        - PolicyName: SSMParameterReadAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource:
+                  - !Sub "arn:aws:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/asset-compliance/${AppEnv}/*"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
+
+  # ── Security Group ──────────────────────────────────────────────────────────
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for standalone Asset Compliance AI EC2 server
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        # HTTP access on Port 80 (routed to port 8000 container)
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        # Optional SSH access
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+
+  # ── EC2 Instance ────────────────────────────────────────────────────────────
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref "AWS::NoValue"]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20
+            VolumeType: gp3
+            Encrypted: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          # Update system and install Git, Docker
+          dnf update -y
+          dnf install -y git docker
+
+          # Start and enable Docker
+          systemctl start docker
+          systemctl enable docker
+          usermod -aG docker ec2-user
+
+          # Create application working directory
+          mkdir -p /home/ec2-user/app
+          cd /home/ec2-user/app
+
+          # Clone repository
+          git clone ${GitRepositoryUrl} .
+          chown -R ec2-user:ec2-user /home/ec2-user/app
+
+          # Pull environment variables dynamically from Parameter Store
+          echo "AWS_REGION=${AWS::Region}" > .env
+          echo "APP_ENV=${AppEnv}" >> .env
+          echo "S3_BUCKET_NAME=${AssetDocsBucketName}" >> .env
+          echo "DYNAMODB_AUDIT_TABLE=${AuditRunsTableName}" >> .env
+
+          aws ssm get-parameters-by-path \
+            --region "${AWS::Region}" \
+            --path "/asset-compliance/${AppEnv}/" \
+            --recursive \
+            --with-decryption \
+            --query "Parameters[*].[Name,Value]" \
+            --output text | while read -r name value; do
+              # Trim SSM parameter prefix and format to uppercase environment variable key
+              clean_name=$(echo "$name" | sed "s|^/asset-compliance/${AppEnv}/||" | tr '[:lower:]' '[:upper:]')
+              echo "${clean_name}=${value}" >> .env
+          done
+
+          # Build application Docker container
+          docker build -t asset-compliance-app:latest .
+
+          # Run Docker container bound to Port 80
+          docker run -d \
+            --name asset-compliance-api \
+            --restart always \
+            -p 80:8000 \
+            --env-file .env \
+            asset-compliance-app:latest
+
+          echo "Bootstrap completed successfully."
+
+Outputs:
+  ServerPublicIp:
+    Description: Standalone server public IP address
+    Value: !GetAtt EC2Instance.PublicIp
+
+  ServerPublicDns:
+    Description: Standalone server public DNS name
+    Value: !GetAtt EC2Instance.PublicDnsName
+
+  ServerInstanceId:
+    Description: Instance ID of the standalone server
+    Value: !Ref EC2Instance

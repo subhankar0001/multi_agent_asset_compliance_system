@@ -58,7 +58,6 @@ async def evidence_agent_node(state: AuditState) -> dict[str, Any]:
                 {
                     "source_type": "image",
                     "s3_key": analysis["s3_key"],
-                    "image_finding": finding,
                     "finding": finding,
                     "condition": analysis.get("condition"),
                 }
@@ -69,7 +68,6 @@ async def evidence_agent_node(state: AuditState) -> dict[str, Any]:
                 {
                     "source_type": "image",
                     "s3_key": analysis["s3_key"],
-                    "image_finding": analysis["raw_description"],
                     "finding": f"Image condition [{analysis.get('condition', 'unknown')}]: "
                     f"{analysis['raw_description'][:300]}",
                     "condition": analysis.get("condition"),

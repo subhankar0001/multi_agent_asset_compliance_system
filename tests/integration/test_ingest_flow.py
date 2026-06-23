@@ -176,3 +176,95 @@ async def test_health_check_no_auth_required():
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_ingest_add_event(s3_bucket, mock_pinecone_index, mock_embeddings_model):
+    """POST /ingest with add event should return 200 and add vectors to existing namespace."""
+    s3_bucket.put_object(
+        Bucket="test-bucket",
+        Key="manuals/pump_v3.pdf",
+        Body=b"%PDF-1.4 fake pdf content with text",
+    )
+    mock_pinecone_index.describe_index_stats.return_value = MagicMock(
+        namespaces={"asset_abc-123": MagicMock(vector_count=5)}
+    )
+
+    app = create_app()
+    with (
+        patch("app.dependencies._get_pinecone_index", return_value=mock_pinecone_index),
+        patch("app.dependencies._get_embeddings_model", return_value=mock_embeddings_model),
+        patch("app.dependencies._get_s3_client", return_value=s3_bucket),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/ingest",
+                json={
+                    "asset_id": "abc-123",
+                    "event": "add",
+                    "documents": [
+                        {
+                            "s3_key": "manuals/pump_v3.pdf",
+                            "doc_id": "manual-v3",
+                            "doc_type": "user_manual",
+                            "filename": "pump_v3.pdf",
+                        }
+                    ],
+                },
+                headers=_HEADERS,
+            )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["asset_id"] == "abc-123"
+    assert body["event"] == "add"
+    assert body["documents_processed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ingest_update_event(s3_bucket, mock_pinecone_index, mock_embeddings_model):
+    """POST /ingest with update event should delete old doc vectors and insert new ones."""
+    s3_bucket.put_object(
+        Bucket="test-bucket",
+        Key="manuals/pump_v2_updated.pdf",
+        Body=b"%PDF-1.4 updated fake pdf content with text",
+    )
+    # Namespace has old vectors
+    mock_pinecone_index.describe_index_stats.return_value = MagicMock(
+        namespaces={"asset_abc-123": MagicMock(vector_count=10)}
+    )
+
+    app = create_app()
+    with (
+        patch("app.dependencies._get_pinecone_index", return_value=mock_pinecone_index),
+        patch("app.dependencies._get_embeddings_model", return_value=mock_embeddings_model),
+        patch("app.dependencies._get_s3_client", return_value=s3_bucket),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/ingest",
+                json={
+                    "asset_id": "abc-123",
+                    "event": "update",
+                    "documents": [
+                        {
+                            "s3_key": "manuals/pump_v2_updated.pdf",
+                            "doc_id": "manual-v2",
+                            "doc_type": "user_manual",
+                            "filename": "pump_v2_updated.pdf",
+                        }
+                    ],
+                },
+                headers=_HEADERS,
+            )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["asset_id"] == "abc-123"
+    assert body["event"] == "update"
+    assert body["documents_processed"] == 1
+    # delete_by_doc_id is called
+    mock_pinecone_index.delete.assert_called_once_with(
+        filter={"doc_id": {"$eq": "manual-v2"}},
+        namespace="asset_abc-123",
+    )

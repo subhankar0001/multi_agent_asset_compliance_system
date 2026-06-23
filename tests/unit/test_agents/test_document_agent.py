@@ -29,9 +29,9 @@ async def test_document_agent_populates_state(
     mock_pinecone_index.query.return_value = MagicMock(matches=[sample_pinecone_match])
 
     with (
-        patch("app.agents.document_agent._get_pinecone_index", return_value=mock_pinecone_index),
+        patch("app.agents.document_agent.get_pinecone_index", return_value=mock_pinecone_index),
         patch(
-            "app.agents.document_agent._get_embeddings_model", return_value=mock_embeddings_model
+            "app.agents.document_agent.get_embeddings", return_value=mock_embeddings_model
         ),
     ):
         result = await document_agent_node(_make_state())
@@ -48,9 +48,9 @@ async def test_document_agent_empty_namespace(mock_pinecone_index, mock_embeddin
     mock_pinecone_index.query.return_value = MagicMock(matches=[])
 
     with (
-        patch("app.agents.document_agent._get_pinecone_index", return_value=mock_pinecone_index),
+        patch("app.agents.document_agent.get_pinecone_index", return_value=mock_pinecone_index),
         patch(
-            "app.agents.document_agent._get_embeddings_model", return_value=mock_embeddings_model
+            "app.agents.document_agent.get_embeddings", return_value=mock_embeddings_model
         ),
     ):
         result = await document_agent_node(_make_state())
@@ -65,9 +65,9 @@ async def test_document_agent_handles_pinecone_error(mock_pinecone_index, mock_e
     mock_pinecone_index.query.side_effect = Exception("Pinecone timeout")
 
     with (
-        patch("app.agents.document_agent._get_pinecone_index", return_value=mock_pinecone_index),
+        patch("app.agents.document_agent.get_pinecone_index", return_value=mock_pinecone_index),
         patch(
-            "app.agents.document_agent._get_embeddings_model", return_value=mock_embeddings_model
+            "app.agents.document_agent.get_embeddings", return_value=mock_embeddings_model
         ),
     ):
         result = await document_agent_node(_make_state())
@@ -82,9 +82,9 @@ async def test_document_agent_handles_embedding_error(mock_pinecone_index, mock_
     mock_embeddings_model.aembed_query = AsyncMock(side_effect=Exception("OpenAI rate limit"))
 
     with (
-        patch("app.agents.document_agent._get_pinecone_index", return_value=mock_pinecone_index),
+        patch("app.agents.document_agent.get_pinecone_index", return_value=mock_pinecone_index),
         patch(
-            "app.agents.document_agent._get_embeddings_model", return_value=mock_embeddings_model
+            "app.agents.document_agent.get_embeddings", return_value=mock_embeddings_model
         ),
     ):
         result = await document_agent_node(_make_state())
