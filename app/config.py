@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = Field(default=None, description="OpenAI API key")
     google_api_key: SecretStr | None = Field(default=None, description="Google Gemini API key")
     xai_api_key: SecretStr | None = Field(default=None, description="xAI Grok API key")
+    openrouter_api_key: SecretStr | None = Field(default=None, description="OpenRouter API key")
 
     # ── Agent Configuration ───────────────────────────────────────────────────
     image_agent_provider: str = Field(default="openai", description="LLM provider for image agent")

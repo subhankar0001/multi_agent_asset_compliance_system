@@ -53,6 +53,8 @@ def _get_api_key(provider: str, settings: Settings) -> str | None:
         return settings.google_api_key.get_secret_value()
     if provider in ("xai", "grok") and settings.xai_api_key:
         return settings.xai_api_key.get_secret_value()
+    if provider == "openrouter" and settings.openrouter_api_key:
+        return settings.openrouter_api_key.get_secret_value()
     return None
 
 
@@ -61,6 +63,16 @@ def _get_agent_llm(provider: str, model: str) -> BaseChatModel:
     """Initialise and cache a generic BaseChatModel for a specific agent."""
     settings = get_settings()
     api_key = _get_api_key(provider, settings)
+
+    if provider == "openrouter":
+        from langchain_openai import ChatOpenAI
+        client = ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
+        logger.info("llm_client_initialised", provider=provider, model=model)
+        return client  # type: ignore[return-value]
 
     # init_chat_model will fallback to os.environ if api_key is None
     kwargs = {"api_key": api_key} if api_key else {}
